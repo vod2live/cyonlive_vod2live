@@ -61,7 +61,10 @@ func (s Service) Master(ctx context.Context, channelID uuid.UUID) ([]byte, error
 	}
 	p, err := hls.ParseMaster(text)
 	if err != nil {
-		return nil, err
+		if _, mediaErr := hls.ParseMedia(text); mediaErr != nil {
+			return nil, err
+		}
+		p = hls.MasterPlaylist{Variants: []hls.Variant{{URI: "", Bandwidth: 1000000}}}
 	}
 	body := []byte(hls.RenderMaster(p, "/v1/channels/"+channelID.String()+"/media"))
 	s.Cache.Set(ctx, cacheKey, body)
@@ -95,7 +98,10 @@ func (s Service) Media(ctx context.Context, channelID uuid.UUID, variant string,
 		}
 		master, e := hls.ParseMaster(masterText)
 		if e != nil {
-			continue
+			if _, mediaErr := hls.ParseMedia(masterText); mediaErr != nil {
+				continue
+			}
+			master = hls.MasterPlaylist{Variants: []hls.Variant{{URI: "", Bandwidth: 1000000}}}
 		}
 		v, e := selectVariant(master, variant)
 		if e != nil {

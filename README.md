@@ -1,6 +1,6 @@
 # VOD2Live Backend
 
-Backend modular para montar canais lineares usando somente fontes HLS (`master.m3u8` ou media playlist). O projeto não faz transcodificação: valida manifests, persiste a grade, mantém o estado do playout e publica manifests HLS lineares.
+Backend modular para montar canais lineares usando somente fontes HLS (`master.m3u8` ou media playlist). O projeto não faz transcodificação: valida manifests, persiste a grade, mantém o estado do playout e publica manifests HLS lineares. Quando a entrada é uma media playlist direta, o canal opera como uma única variante.
 
 ## Componentes
 
