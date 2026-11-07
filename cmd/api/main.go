@@ -11,6 +11,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/redis/go-redis/v9"
 	"github.com/vod2live/cyonlive_vod2live/internal/asset"
 	"github.com/vod2live/cyonlive_vod2live/internal/channel"
 	"github.com/vod2live/cyonlive_vod2live/internal/config"
@@ -27,10 +28,11 @@ func main() {
 		log.Fatalf("database: %v", err)
 	}
 	defer pool.Close()
+	redisClient := redis.NewClient(&redis.Options{Addr: cfg.RedisAddr})
 	assets := asset.PostgresRepository{Pool: pool}
 	channels := channel.PostgresRepository{Pool: pool}
 	schedules := schedule.PostgresRepository{Pool: pool}
-	manifests := manifest.Service{Assets: assets, Schedules: schedules}
+	manifests := manifest.Service{Assets: assets, Schedules: schedules, Cache: manifest.ManifestCache{Client: redisClient}}
 	r := chi.NewRouter()
 	r.Get("/healthz", health.Handler)
 	r.Post("/v1/assets", createAsset(assets))

@@ -20,6 +20,7 @@ type Service struct {
 	Assets    asset.PostgresRepository
 	Schedules schedule.PostgresRepository
 	Client    *http.Client
+	Cache     ManifestCache
 }
 
 func (s Service) client() *http.Client {
@@ -42,6 +43,10 @@ func (s Service) fetch(ctx context.Context, raw string) (string, error) {
 	return string(body), err
 }
 func (s Service) Master(ctx context.Context, channelID uuid.UUID) ([]byte, error) {
+	cacheKey := "vod2live:manifest:" + channelID.String() + ":master"
+	if cached, ok := s.Cache.Get(ctx, cacheKey); ok {
+		return cached, nil
+	}
 	items, err := s.Schedules.List(ctx, channelID)
 	if err != nil || len(items) == 0 {
 		return nil, fmt.Errorf("channel has no schedule")
@@ -58,9 +63,15 @@ func (s Service) Master(ctx context.Context, channelID uuid.UUID) ([]byte, error
 	if err != nil {
 		return nil, err
 	}
-	return []byte(hls.RenderMaster(p, "/v1/channels/"+channelID.String()+"/media")), nil
+	body := []byte(hls.RenderMaster(p, "/v1/channels/"+channelID.String()+"/media"))
+	s.Cache.Set(ctx, cacheKey, body)
+	return body, nil
 }
 func (s Service) Media(ctx context.Context, channelID uuid.UUID, variant string, now time.Time) ([]byte, error) {
+	cacheKey := "vod2live:manifest:" + channelID.String() + ":media:" + variant + ":" + now.UTC().Format("20060102150405")
+	if cached, ok := s.Cache.Get(ctx, cacheKey); ok {
+		return cached, nil
+	}
 	items, err := s.Schedules.List(ctx, channelID)
 	if err != nil {
 		return nil, err
@@ -124,8 +135,11 @@ func (s Service) Media(ctx context.Context, channelID uuid.UUID, variant string,
 	if len(out.Segments) == 0 {
 		return nil, fmt.Errorf("no playable HLS segments")
 	}
-	return []byte(hls.RenderMedia(out, sequence, false)), nil
+	body := []byte(hls.RenderMedia(out, sequence, false))
+	s.Cache.Set(ctx, cacheKey, body)
+	return body, nil
 }
+
 func selectVariant(p hls.MasterPlaylist, wanted string) (hls.Variant, error) {
 	for _, v := range p.Variants {
 		id := hls.VariantID(v)

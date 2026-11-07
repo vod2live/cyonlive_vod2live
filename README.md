@@ -12,6 +12,8 @@ Backend modular para montar canais lineares usando somente fontes HLS (`master.m
 - PostgreSQL: configuração, catálogo e grade.
 - Redis: locks, cache e estado quente.
 
+O Redis mantém cache curto dos manifests (`master.m3u8` e media playlists), estado quente por canal e locks distribuídos para impedir que dois workers controlem o mesmo playout. O PostgreSQL continua sendo a fonte permanente da configuração e da grade.
+
 ## Executar
 
 ```bash
