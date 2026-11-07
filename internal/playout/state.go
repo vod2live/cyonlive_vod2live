@@ -1,0 +1,14 @@
+package playout
+
+import (
+	"time"
+	"github.com/google/uuid"
+)
+
+type State struct { ChannelID, ScheduleItemID, AssetID uuid.UUID; Status string; PositionMS, MediaSequence int64; UpdatedAt time.Time }
+
+type StateStore interface {
+	Get(channelID uuid.UUID) (State, error)
+	Put(state State) error
+	AcquireLock(channelID uuid.UUID, ttl time.Duration) (bool, error)
+}
