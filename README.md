@@ -21,6 +21,10 @@ O worker separado `cmd/playout` consulta canais com status `running`, adquire o 
 ```bash
 docker compose up --build
 curl http://localhost:8080/healthz
+# readiness: PostgreSQL + Redis
+curl http://localhost:8080/readyz
+# smoke test
+./tests/integration/smoke.sh
 ```
 
 ## Entrada de asset
@@ -35,6 +39,7 @@ curl http://localhost:8080/healthz
 ## Endpoints iniciais
 
 - `GET /healthz`
+- `GET /readyz`
 - `POST /v1/assets`
 - `GET /v1/assets/{id}`
 - `POST /v1/assets/{id}/validate`

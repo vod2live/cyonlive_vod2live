@@ -35,6 +35,7 @@ func main() {
 	manifests := manifest.Service{Assets: assets, Schedules: schedules, Cache: manifest.ManifestCache{Client: redisClient}}
 	r := chi.NewRouter()
 	r.Get("/healthz", health.Handler)
+	r.Get("/readyz", health.ReadyHandler(pool, redisClient))
 	r.Post("/v1/assets", createAsset(assets))
 	r.Get("/v1/assets/{id}", getAsset(assets))
 	r.Post("/v1/assets/{id}/validate", validateAsset(assets))
