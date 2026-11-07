@@ -232,6 +232,10 @@ func createScheduleItem(channels channel.PostgresRepository, assets asset.Postgr
 			http.Error(w, "asset precisa estar validado", 422)
 			return
 		}
+		if req.EndsAt == nil && assetItem.DurationMS > 0 {
+			derived := req.StartsAt.Add(time.Duration(assetItem.DurationMS) * time.Millisecond)
+			req.EndsAt = &derived
+		}
 		item := schedule.Item{ID: uuid.New(), ChannelID: channelID, AssetID: req.AssetID, StartsAt: req.StartsAt, EndsAt: req.EndsAt, Position: req.Position, Enabled: true}
 		if err := repo.Create(r.Context(), item); err != nil {
 			if errors.Is(err, context.Canceled) {

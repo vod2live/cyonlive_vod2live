@@ -32,7 +32,19 @@ func (w Worker) Tick(ctx context.Context, channelID uuid.UUID) error {
 	var current *schedule.Item
 	for i := range items {
 		item := items[i]
-		if item.Enabled && !item.StartsAt.After(now) && (item.EndsAt == nil || now.Before(*item.EndsAt)) {
+		if !item.Enabled || item.StartsAt.After(now) {
+			continue
+		}
+		assetItem, assetErr := w.Assets.FindByID(ctx, item.AssetID)
+		if assetErr != nil {
+			continue
+		}
+		end := item.EndsAt
+		if end == nil && assetItem.DurationMS > 0 {
+			derived := item.StartsAt.Add(time.Duration(assetItem.DurationMS) * time.Millisecond)
+			end = &derived
+		}
+		if end == nil || now.Before(*end) {
 			current = &item
 			break
 		}
