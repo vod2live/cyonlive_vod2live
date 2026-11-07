@@ -35,6 +35,10 @@ curl http://localhost:8080/healthz
 - `GET /v1/assets/{id}`
 - `POST /v1/assets/{id}/validate`
 - `POST /v1/channels`
+- `GET /v1/channels`
+- `GET /v1/channels/{id}`
+- `POST /v1/channels/{id}/schedule`
+- `GET /v1/channels/{id}/schedule`
 - `GET /v1/channels/{id}/master.m3u8`
 
 ## Limites atuais do esqueleto

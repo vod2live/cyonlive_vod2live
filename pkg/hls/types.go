@@ -1,8 +1,8 @@
 package hls
 
 type MasterPlaylist struct {
-	Variants []Variant
-	Audio    []Rendition
+	Variants  []Variant
+	Audio     []Rendition
 	Subtitles []Rendition
 }
 
@@ -16,11 +16,11 @@ type Variant struct {
 }
 
 type Rendition struct {
-	URI        string
-	GroupID    string
-	Name       string
-	Language   string
-	Default    bool
+	URI      string
+	GroupID  string
+	Name     string
+	Language string
+	Default  bool
 }
 
 type MediaPlaylist struct {
@@ -31,8 +31,8 @@ type MediaPlaylist struct {
 }
 
 type Segment struct {
-	URI       string
-	Duration  float64
-	Title     string
+	URI           string
+	Duration      float64
+	Title         string
 	Discontinuity bool
 }

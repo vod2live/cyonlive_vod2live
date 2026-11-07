@@ -3,9 +3,9 @@ package config
 import "os"
 
 type Config struct {
-	HTTPAddr     string
-	DatabaseURL  string
-	RedisAddr    string
+	HTTPAddr    string
+	DatabaseURL string
+	RedisAddr   string
 }
 
 func Load() Config {
@@ -17,6 +17,8 @@ func Load() Config {
 }
 
 func env(key, fallback string) string {
-	if value := os.Getenv(key); value != "" { return value }
+	if value := os.Getenv(key); value != "" {
+		return value
+	}
 	return fallback
 }

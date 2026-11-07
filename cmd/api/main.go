@@ -3,57 +3,214 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/vod2live/cyonlive_vod2live/internal/asset"
+	"github.com/vod2live/cyonlive_vod2live/internal/channel"
 	"github.com/vod2live/cyonlive_vod2live/internal/config"
 	"github.com/vod2live/cyonlive_vod2live/internal/db"
 	"github.com/vod2live/cyonlive_vod2live/internal/health"
+	"github.com/vod2live/cyonlive_vod2live/internal/schedule"
 )
 
 func main() {
 	cfg := config.Load()
-	ctx := context.Background()
-	pool, err := db.Open(ctx, cfg.DatabaseURL)
-	if err != nil { log.Fatalf("database: %v", err) }
+	pool, err := db.Open(context.Background(), cfg.DatabaseURL)
+	if err != nil {
+		log.Fatalf("database: %v", err)
+	}
 	defer pool.Close()
-	repo := asset.PostgresRepository{Pool: pool}
+	assets := asset.PostgresRepository{Pool: pool}
+	channels := channel.PostgresRepository{Pool: pool}
+	schedules := schedule.PostgresRepository{Pool: pool}
 	r := chi.NewRouter()
 	r.Get("/healthz", health.Handler)
-	r.Post("/v1/assets", createAsset(repo))
-	r.Get("/v1/assets/{id}", getAsset(repo))
-	r.Post("/v1/assets/{id}/validate", validateAsset(repo))
+	r.Post("/v1/assets", createAsset(assets))
+	r.Get("/v1/assets/{id}", getAsset(assets))
+	r.Post("/v1/assets/{id}/validate", validateAsset(assets))
+	r.Post("/v1/channels", createChannel(channels))
+	r.Get("/v1/channels", listChannels(channels))
+	r.Get("/v1/channels/{id}", getChannel(channels))
+	r.Post("/v1/channels/{id}/schedule", createScheduleItem(channels, assets, schedules))
+	r.Get("/v1/channels/{id}/schedule", listSchedule(schedules))
 	log.Printf("vod2live api listening on %s", cfg.HTTPAddr)
 	log.Fatal(http.ListenAndServe(cfg.HTTPAddr, r))
 }
 
-type assetRequest struct { Title string `json:"title"`; HLSURL string `json:"hls_url"` }
+type assetRequest struct {
+	Title  string `json:"title"`
+	HLSURL string `json:"hls_url"`
+}
 
-func createAsset(repo asset.PostgresRepository) http.HandlerFunc { return func(w http.ResponseWriter, r *http.Request) {
-	var req assetRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Title) == "" || strings.TrimSpace(req.HLSURL) == "" { http.Error(w, "title e hls_url são obrigatórios", http.StatusBadRequest); return }
-	item := asset.Asset{ID: uuid.New(), Title: req.Title, HLSURL: strings.TrimSpace(req.HLSURL), Status: asset.StatusPending}
-	if err := repo.Create(r.Context(), item); err != nil { http.Error(w, "erro ao criar asset", 500); return }
-	writeJSON(w, http.StatusCreated, item)
-} }
+func createAsset(repo asset.PostgresRepository) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req assetRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Title) == "" || strings.TrimSpace(req.HLSURL) == "" {
+			http.Error(w, "title e hls_url são obrigatórios", 400)
+			return
+		}
+		item := asset.Asset{ID: uuid.New(), Title: req.Title, HLSURL: strings.TrimSpace(req.HLSURL), Status: asset.StatusPending}
+		if err := repo.Create(r.Context(), item); err != nil {
+			http.Error(w, "erro ao criar asset", 500)
+			return
+		}
+		writeJSON(w, 201, item)
+	}
+}
+func getAsset(repo asset.PostgresRepository) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, err := uuid.Parse(chi.URLParam(r, "id"))
+		if err != nil {
+			http.Error(w, "id inválido", 400)
+			return
+		}
+		item, err := repo.FindByID(r.Context(), id)
+		if err != nil {
+			http.Error(w, "asset não encontrado", 404)
+			return
+		}
+		writeJSON(w, 200, item)
+	}
+}
+func validateAsset(repo asset.PostgresRepository) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, err := uuid.Parse(chi.URLParam(r, "id"))
+		if err != nil {
+			http.Error(w, "id inválido", 400)
+			return
+		}
+		item, err := repo.FindByID(r.Context(), id)
+		if err != nil {
+			http.Error(w, "asset não encontrado", 404)
+			return
+		}
+		inspection, err := (asset.HLSInspector{}).Inspect(item.HLSURL)
+		if err != nil {
+			_ = repo.UpdateStatus(r.Context(), id, asset.StatusInvalid, 0, map[string]string{"error": err.Error()})
+			http.Error(w, err.Error(), 422)
+			return
+		}
+		_ = repo.UpdateStatus(r.Context(), id, asset.StatusValid, inspection.DurationMS, inspection)
+		writeJSON(w, 200, inspection)
+	}
+}
 
-func getAsset(repo asset.PostgresRepository) http.HandlerFunc { return func(w http.ResponseWriter, r *http.Request) {
-	id, err := uuid.Parse(chi.URLParam(r, "id")); if err != nil { http.Error(w, "id inválido", 400); return }
-	item, err := repo.FindByID(r.Context(), id); if err != nil { http.Error(w, "asset não encontrado", 404); return }
-	writeJSON(w, 200, item)
-} }
+type channelRequest struct {
+	Name        string `json:"name"`
+	Slug        string `json:"slug"`
+	LoopEnabled bool   `json:"loop_enabled"`
+}
 
-func validateAsset(repo asset.PostgresRepository) http.HandlerFunc { return func(w http.ResponseWriter, r *http.Request) {
-	id, err := uuid.Parse(chi.URLParam(r, "id")); if err != nil { http.Error(w, "id inválido", 400); return }
-	item, err := repo.FindByID(r.Context(), id); if err != nil { http.Error(w, "asset não encontrado", 404); return }
-	inspection, err := (asset.HLSInspector{}).Inspect(item.HLSURL)
-	if err != nil { _ = repo.UpdateStatus(r.Context(), id, asset.StatusInvalid, 0, map[string]string{"error": err.Error()}); http.Error(w, err.Error(), 422); return }
-	_ = repo.UpdateStatus(r.Context(), id, asset.StatusValid, inspection.DurationMS, inspection)
-	writeJSON(w, 200, inspection)
-} }
+func createChannel(repo channel.PostgresRepository) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req channelRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Name) == "" {
+			http.Error(w, "name é obrigatório", 400)
+			return
+		}
+		slug := channel.NormalizeSlug(req.Slug)
+		if slug == "" {
+			slug = channel.NormalizeSlug(req.Name)
+		}
+		item := channel.Channel{ID: uuid.New(), Name: req.Name, Slug: slug, Status: "draft", LoopEnabled: req.LoopEnabled}
+		if err := repo.Create(r.Context(), item); err != nil {
+			http.Error(w, "erro ao criar canal", 500)
+			return
+		}
+		writeJSON(w, 201, item)
+	}
+}
+func listChannels(repo channel.PostgresRepository) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		items, err := repo.List(r.Context())
+		if err != nil {
+			http.Error(w, "erro ao listar canais", 500)
+			return
+		}
+		writeJSON(w, 200, items)
+	}
+}
+func getChannel(repo channel.PostgresRepository) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, err := uuid.Parse(chi.URLParam(r, "id"))
+		if err != nil {
+			http.Error(w, "id inválido", 400)
+			return
+		}
+		item, err := repo.FindByID(r.Context(), id)
+		if err != nil {
+			http.Error(w, "canal não encontrado", 404)
+			return
+		}
+		writeJSON(w, 200, item)
+	}
+}
 
-func writeJSON(w http.ResponseWriter, status int, value any) { w.Header().Set("Content-Type", "application/json"); w.WriteHeader(status); _ = json.NewEncoder(w).Encode(value) }
+type scheduleRequest struct {
+	AssetID  uuid.UUID  `json:"asset_id"`
+	StartsAt time.Time  `json:"starts_at"`
+	EndsAt   *time.Time `json:"ends_at,omitempty"`
+	Position int        `json:"position"`
+}
+
+func createScheduleItem(channels channel.PostgresRepository, assets asset.PostgresRepository, repo schedule.PostgresRepository) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		channelID, err := uuid.Parse(chi.URLParam(r, "id"))
+		if err != nil {
+			http.Error(w, "id de canal inválido", 400)
+			return
+		}
+		if _, err = channels.FindByID(r.Context(), channelID); err != nil {
+			http.Error(w, "canal não encontrado", 404)
+			return
+		}
+		var req scheduleRequest
+		if err = json.NewDecoder(r.Body).Decode(&req); err != nil || req.AssetID == uuid.Nil || req.StartsAt.IsZero() {
+			http.Error(w, "asset_id e starts_at são obrigatórios", 400)
+			return
+		}
+		assetItem, err := assets.FindByID(r.Context(), req.AssetID)
+		if err != nil || assetItem.Status != asset.StatusValid {
+			http.Error(w, "asset precisa estar validado", 422)
+			return
+		}
+		item := schedule.Item{ID: uuid.New(), ChannelID: channelID, AssetID: req.AssetID, StartsAt: req.StartsAt, EndsAt: req.EndsAt, Position: req.Position, Enabled: true}
+		if err := repo.Create(r.Context(), item); err != nil {
+			if errors.Is(err, context.Canceled) {
+				http.Error(w, "requisição cancelada", 499)
+			} else if strings.Contains(err.Error(), "schedule conflict") {
+				http.Error(w, "conflito de horário na grade", 409)
+			} else {
+				http.Error(w, "erro ao criar item da grade", 500)
+			}
+			return
+		}
+		writeJSON(w, 201, item)
+	}
+}
+func listSchedule(repo schedule.PostgresRepository) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, err := uuid.Parse(chi.URLParam(r, "id"))
+		if err != nil {
+			http.Error(w, "id inválido", 400)
+			return
+		}
+		items, err := repo.List(r.Context(), id)
+		if err != nil {
+			http.Error(w, "erro ao listar grade", 500)
+			return
+		}
+		writeJSON(w, 200, items)
+	}
+}
+func writeJSON(w http.ResponseWriter, status int, value any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(value)
+}
