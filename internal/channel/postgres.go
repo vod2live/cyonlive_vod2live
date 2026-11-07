@@ -50,6 +50,28 @@ func (r PostgresRepository) List(ctx context.Context) ([]Channel, error) {
 	return result, rows.Err()
 }
 
+func (r PostgresRepository) ListRunning(ctx context.Context) ([]uuid.UUID, error) {
+	rows, err := r.Pool.Query(ctx, `SELECT id FROM channels WHERE status='running' ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var result []uuid.UUID
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		result = append(result, id)
+	}
+	return result, rows.Err()
+}
+
+func (r PostgresRepository) UpdateStatus(ctx context.Context, id uuid.UUID, status string) error {
+	_, err := r.Pool.Exec(ctx, `UPDATE channels SET status=$2,updated_at=now() WHERE id=$1`, id, status)
+	return err
+}
+
 func NormalizeSlug(value string) string {
 	return strings.ToLower(strings.TrimSpace(strings.ReplaceAll(value, " ", "-")))
 }

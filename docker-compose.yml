@@ -3,12 +3,27 @@ services:
     build:
       context: .
       dockerfile: deployments/docker/Dockerfile
+      args:
+        SERVICE: api
     environment:
       HTTP_ADDR: :8080
       DATABASE_URL: postgres://vod2live:vod2live@postgres:5432/vod2live?sslmode=disable
       REDIS_ADDR: redis:6379
     ports:
       - "8080:8080"
+    depends_on:
+      - postgres
+      - redis
+
+  playout:
+    build:
+      context: .
+      dockerfile: deployments/docker/Dockerfile
+      args:
+        SERVICE: playout
+    environment:
+      DATABASE_URL: postgres://vod2live:vod2live@postgres:5432/vod2live?sslmode=disable
+      REDIS_ADDR: redis:6379
     depends_on:
       - postgres
       - redis

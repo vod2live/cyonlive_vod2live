@@ -41,6 +41,8 @@ func main() {
 	r.Post("/v1/channels", createChannel(channels))
 	r.Get("/v1/channels", listChannels(channels))
 	r.Get("/v1/channels/{id}", getChannel(channels))
+	r.Post("/v1/channels/{id}/start", updateChannelStatus(channels, "running"))
+	r.Post("/v1/channels/{id}/stop", updateChannelStatus(channels, "stopped"))
 	r.Get("/v1/channels/{id}/master.m3u8", masterManifest(manifests))
 	r.Get("/v1/channels/{id}/media/{variant}.m3u8", mediaManifest(manifests))
 	r.Post("/v1/channels/{id}/schedule", createScheduleItem(channels, assets, schedules))
@@ -155,6 +157,25 @@ func getChannel(repo channel.PostgresRepository) http.HandlerFunc {
 			return
 		}
 		writeJSON(w, 200, item)
+	}
+}
+
+func updateChannelStatus(repo channel.PostgresRepository, status string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, err := uuid.Parse(chi.URLParam(r, "id"))
+		if err != nil {
+			http.Error(w, "id inválido", 400)
+			return
+		}
+		if _, err = repo.FindByID(r.Context(), id); err != nil {
+			http.Error(w, "canal não encontrado", 404)
+			return
+		}
+		if err = repo.UpdateStatus(r.Context(), id, status); err != nil {
+			http.Error(w, "erro ao atualizar canal", 500)
+			return
+		}
+		writeJSON(w, 200, map[string]string{"channel_id": id.String(), "status": status})
 	}
 }
 

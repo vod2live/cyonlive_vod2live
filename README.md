@@ -14,6 +14,8 @@ Backend modular para montar canais lineares usando somente fontes HLS (`master.m
 
 O Redis mantém cache curto dos manifests (`master.m3u8` e media playlists), estado quente por canal e locks distribuídos para impedir que dois workers controlem o mesmo playout. O PostgreSQL continua sendo a fonte permanente da configuração e da grade.
 
+O worker separado `cmd/playout` consulta canais com status `running`, adquire o lock Redis, calcula a posição atual na programação e atualiza o estado quente do canal a cada 5 segundos.
+
 ## Executar
 
 ```bash
@@ -39,6 +41,8 @@ curl http://localhost:8080/healthz
 - `POST /v1/channels`
 - `GET /v1/channels`
 - `GET /v1/channels/{id}`
+- `POST /v1/channels/{id}/start`
+- `POST /v1/channels/{id}/stop`
 - `POST /v1/channels/{id}/schedule`
 - `GET /v1/channels/{id}/schedule`
 - `GET /v1/channels/{id}/master.m3u8`
