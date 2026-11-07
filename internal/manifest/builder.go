@@ -2,7 +2,7 @@ package manifest
 
 import (
 	"github.com/google/uuid"
-	"github.com/example/vod2live-backend/pkg/hls"
+	"github.com/vod2live/cyonlive_vod2live/pkg/hls"
 )
 
 type Builder interface {

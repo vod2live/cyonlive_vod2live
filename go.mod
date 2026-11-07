@@ -1,4 +1,4 @@
-module github.com/example/vod2live-backend
+module github.com/vod2live/cyonlive_vod2live
 
 go 1.23
 
