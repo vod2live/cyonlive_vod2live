@@ -48,6 +48,7 @@ curl http://localhost:8080/readyz
 - `GET /v1/channels/{id}`
 - `POST /v1/channels/{id}/start`
 - `POST /v1/channels/{id}/stop`
+- `GET /v1/channels/{id}/status`
 - `POST /v1/channels/{id}/schedule`
 - `GET /v1/channels/{id}/schedule`
 - `GET /v1/channels/{id}/master.m3u8`

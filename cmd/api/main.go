@@ -18,6 +18,7 @@ import (
 	"github.com/vod2live/cyonlive_vod2live/internal/db"
 	"github.com/vod2live/cyonlive_vod2live/internal/health"
 	"github.com/vod2live/cyonlive_vod2live/internal/manifest"
+	"github.com/vod2live/cyonlive_vod2live/internal/playout"
 	"github.com/vod2live/cyonlive_vod2live/internal/schedule"
 )
 
@@ -33,6 +34,7 @@ func main() {
 	channels := channel.PostgresRepository{Pool: pool}
 	schedules := schedule.PostgresRepository{Pool: pool}
 	manifests := manifest.Service{Assets: assets, Schedules: schedules, Cache: manifest.ManifestCache{Client: redisClient}}
+	playoutStore := playout.RedisStore{Client: redisClient}
 	r := chi.NewRouter()
 	r.Get("/healthz", health.Handler)
 	r.Get("/readyz", health.ReadyHandler(pool, redisClient))
@@ -44,6 +46,7 @@ func main() {
 	r.Get("/v1/channels/{id}", getChannel(channels))
 	r.Post("/v1/channels/{id}/start", updateChannelStatus(channels, "running"))
 	r.Post("/v1/channels/{id}/stop", updateChannelStatus(channels, "stopped"))
+	r.Get("/v1/channels/{id}/status", channelStatus(channels, playoutStore))
 	r.Get("/v1/channels/{id}/master.m3u8", masterManifest(manifests))
 	r.Get("/v1/channels/{id}/media/{variant}.m3u8", mediaManifest(manifests))
 	r.Post("/v1/channels/{id}/schedule", createScheduleItem(channels, assets, schedules))
@@ -177,6 +180,27 @@ func updateChannelStatus(repo channel.PostgresRepository, status string) http.Ha
 			return
 		}
 		writeJSON(w, 200, map[string]string{"channel_id": id.String(), "status": status})
+	}
+}
+
+func channelStatus(repo channel.PostgresRepository, store playout.RedisStore) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, err := uuid.Parse(chi.URLParam(r, "id"))
+		if err != nil {
+			http.Error(w, "id inválido", 400)
+			return
+		}
+		item, err := repo.FindByID(r.Context(), id)
+		if err != nil {
+			http.Error(w, "canal não encontrado", 404)
+			return
+		}
+		state, stateErr := store.Get(r.Context(), id)
+		response := map[string]any{"channel": item, "playout": state}
+		if stateErr != nil {
+			response["playout_error"] = stateErr.Error()
+		}
+		writeJSON(w, 200, response)
 	}
 }
 
