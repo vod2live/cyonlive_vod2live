@@ -51,9 +51,13 @@ curl http://localhost:8080/readyz
 - `GET /v1/channels/{id}/status`
 - `POST /v1/channels/{id}/schedule`
 - `GET /v1/channels/{id}/schedule`
+- `PATCH /v1/schedule/{id}`
+- `DELETE /v1/schedule/{id}`
 - `GET /v1/channels/{id}/master.m3u8`
 - `GET /v1/channels/{id}/media/{variant}.m3u8`
 
 ## Limites atuais do esqueleto
 
 A montagem real de manifests e a persistência dos repositórios estão isoladas por interfaces para implementação incremental. Não são aceitos MP4, MPEG-TS ou upload de arquivos.
+
+A especificação de integração está em [`openapi.yaml`](./openapi.yaml).

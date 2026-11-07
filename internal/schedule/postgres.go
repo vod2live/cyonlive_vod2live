@@ -50,3 +50,21 @@ func (r PostgresRepository) List(ctx context.Context, channelID uuid.UUID) ([]It
 	}
 	return result, rows.Err()
 }
+
+func (r PostgresRepository) Update(ctx context.Context, id uuid.UUID, startsAt time.Time, endsAt *time.Time, position int, enabled bool) error {
+	var conflict bool
+	err := r.Pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM schedule_items WHERE channel_id=(SELECT channel_id FROM schedule_items WHERE id=$1) AND id<>$1 AND enabled=true AND tstzrange(starts_at,COALESCE(ends_at,'infinity'::timestamptz),'[)') && tstzrange($2,COALESCE($3,'infinity'::timestamptz),'[)'))`, id, startsAt, endsAt).Scan(&conflict)
+	if err != nil {
+		return err
+	}
+	if conflict {
+		return fmt.Errorf("schedule conflict")
+	}
+	_, err = r.Pool.Exec(ctx, `UPDATE schedule_items SET starts_at=$2,ends_at=$3,position=$4,enabled=$5 WHERE id=$1`, id, startsAt, endsAt, position, enabled)
+	return err
+}
+
+func (r PostgresRepository) Delete(ctx context.Context, id uuid.UUID) error {
+	_, err := r.Pool.Exec(ctx, `DELETE FROM schedule_items WHERE id=$1`, id)
+	return err
+}

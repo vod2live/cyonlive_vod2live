@@ -1,0 +1,107 @@
+openapi: 3.0.3
+info:
+  title: VOD2Live Backend API
+  version: 0.1.0
+  description: API para catálogo HLS, canais lineares e playout VOD2Live.
+servers:
+  - url: http://localhost:8080
+paths:
+  /healthz:
+    get:
+      summary: Liveness
+      responses:
+        '200': { description: Serviço ativo }
+  /readyz:
+    get:
+      summary: Readiness de PostgreSQL e Redis
+      responses:
+        '200': { description: Dependências prontas }
+        '503': { description: Dependência indisponível }
+  /v1/assets:
+    post:
+      summary: Cadastrar asset HLS
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AssetInput' }
+      responses:
+        '201': { description: Asset criado }
+  /v1/assets/{id}/validate:
+    post:
+      summary: Validar manifesto HLS
+      parameters: [{ $ref: '#/components/parameters/Id' }]
+      responses:
+        '200': { description: Manifesto validado }
+        '422': { description: Manifesto inválido }
+  /v1/channels:
+    post:
+      summary: Criar canal
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ChannelInput' }
+      responses: { '201': { description: Canal criado } }
+    get:
+      summary: Listar canais
+      responses: { '200': { description: Lista de canais } }
+  /v1/channels/{id}/start:
+    post:
+      summary: Iniciar playout do canal
+      parameters: [{ $ref: '#/components/parameters/Id' }]
+      responses: { '200': { description: Canal iniciado } }
+  /v1/channels/{id}/stop:
+    post:
+      summary: Parar playout do canal
+      parameters: [{ $ref: '#/components/parameters/Id' }]
+      responses: { '200': { description: Canal parado } }
+  /v1/channels/{id}/status:
+    get:
+      summary: Consultar estado do canal e playout
+      parameters: [{ $ref: '#/components/parameters/Id' }]
+      responses: { '200': { description: Estado operacional } }
+  /v1/channels/{id}/schedule:
+    get:
+      summary: Listar grade
+      parameters: [{ $ref: '#/components/parameters/Id' }]
+      responses: { '200': { description: Itens da grade } }
+    post:
+      summary: Adicionar item à grade
+      parameters: [{ $ref: '#/components/parameters/Id' }]
+      responses: { '201': { description: Item criado }, '409': { description: Conflito de horário } }
+  /v1/schedule/{id}:
+    patch:
+      summary: Editar item da grade
+      parameters: [{ $ref: '#/components/parameters/Id' }]
+      responses: { '200': { description: Item atualizado }, '409': { description: Conflito de horário } }
+    delete:
+      summary: Remover item da grade
+      parameters: [{ $ref: '#/components/parameters/Id' }]
+      responses: { '204': { description: Item removido } }
+  /v1/channels/{id}/master.m3u8:
+    get:
+      summary: Manifesto master HLS do canal
+      parameters: [{ $ref: '#/components/parameters/Id' }]
+      responses: { '200': { description: Master HLS, content: { application/vnd.apple.mpegurl: {} } } }
+components:
+  parameters:
+    Id:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+  schemas:
+    AssetInput:
+      type: object
+      required: [title, hls_url]
+      properties:
+        title: { type: string }
+        hls_url: { type: string, format: uri }
+    ChannelInput:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string }
+        slug: { type: string }
+        loop_enabled: { type: boolean }

@@ -51,6 +51,8 @@ func main() {
 	r.Get("/v1/channels/{id}/media/{variant}.m3u8", mediaManifest(manifests))
 	r.Post("/v1/channels/{id}/schedule", createScheduleItem(channels, assets, schedules))
 	r.Get("/v1/channels/{id}/schedule", listSchedule(schedules))
+	r.Patch("/v1/schedule/{id}", updateScheduleItem(schedules))
+	r.Delete("/v1/schedule/{id}", deleteScheduleItem(schedules))
 	log.Printf("vod2live api listening on %s", cfg.HTTPAddr)
 	log.Fatal(http.ListenAndServe(cfg.HTTPAddr, r))
 }
@@ -265,6 +267,53 @@ func listSchedule(repo schedule.PostgresRepository) http.HandlerFunc {
 		writeJSON(w, 200, items)
 	}
 }
+
+type scheduleUpdateRequest struct {
+	StartsAt time.Time  `json:"starts_at"`
+	EndsAt   *time.Time `json:"ends_at,omitempty"`
+	Position int        `json:"position"`
+	Enabled  bool       `json:"enabled"`
+}
+
+func updateScheduleItem(repo schedule.PostgresRepository) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, err := uuid.Parse(chi.URLParam(r, "id"))
+		if err != nil {
+			http.Error(w, "id inválido", 400)
+			return
+		}
+		var req scheduleUpdateRequest
+		if err = json.NewDecoder(r.Body).Decode(&req); err != nil || req.StartsAt.IsZero() {
+			http.Error(w, "starts_at é obrigatório", 400)
+			return
+		}
+		if err = repo.Update(r.Context(), id, req.StartsAt, req.EndsAt, req.Position, req.Enabled); err != nil {
+			if strings.Contains(err.Error(), "schedule conflict") {
+				http.Error(w, "conflito de horário na grade", 409)
+			} else {
+				http.Error(w, "erro ao atualizar item da grade", 500)
+			}
+			return
+		}
+		writeJSON(w, 200, map[string]any{"id": id, "starts_at": req.StartsAt, "ends_at": req.EndsAt, "position": req.Position, "enabled": req.Enabled})
+	}
+}
+
+func deleteScheduleItem(repo schedule.PostgresRepository) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, err := uuid.Parse(chi.URLParam(r, "id"))
+		if err != nil {
+			http.Error(w, "id inválido", 400)
+			return
+		}
+		if err = repo.Delete(r.Context(), id); err != nil {
+			http.Error(w, "erro ao remover item da grade", 500)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
 func masterManifest(service manifest.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id, err := uuid.Parse(chi.URLParam(r, "id"))
