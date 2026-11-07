@@ -16,6 +16,7 @@ import (
 	"github.com/vod2live/cyonlive_vod2live/internal/config"
 	"github.com/vod2live/cyonlive_vod2live/internal/db"
 	"github.com/vod2live/cyonlive_vod2live/internal/health"
+	"github.com/vod2live/cyonlive_vod2live/internal/manifest"
 	"github.com/vod2live/cyonlive_vod2live/internal/schedule"
 )
 
@@ -29,6 +30,7 @@ func main() {
 	assets := asset.PostgresRepository{Pool: pool}
 	channels := channel.PostgresRepository{Pool: pool}
 	schedules := schedule.PostgresRepository{Pool: pool}
+	manifests := manifest.Service{Assets: assets, Schedules: schedules}
 	r := chi.NewRouter()
 	r.Get("/healthz", health.Handler)
 	r.Post("/v1/assets", createAsset(assets))
@@ -37,6 +39,8 @@ func main() {
 	r.Post("/v1/channels", createChannel(channels))
 	r.Get("/v1/channels", listChannels(channels))
 	r.Get("/v1/channels/{id}", getChannel(channels))
+	r.Get("/v1/channels/{id}/master.m3u8", masterManifest(manifests))
+	r.Get("/v1/channels/{id}/media/{variant}.m3u8", mediaManifest(manifests))
 	r.Post("/v1/channels/{id}/schedule", createScheduleItem(channels, assets, schedules))
 	r.Get("/v1/channels/{id}/schedule", listSchedule(schedules))
 	log.Printf("vod2live api listening on %s", cfg.HTTPAddr)
@@ -207,6 +211,39 @@ func listSchedule(repo schedule.PostgresRepository) http.HandlerFunc {
 			return
 		}
 		writeJSON(w, 200, items)
+	}
+}
+func masterManifest(service manifest.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, err := uuid.Parse(chi.URLParam(r, "id"))
+		if err != nil {
+			http.Error(w, "id inválido", 400)
+			return
+		}
+		body, err := service.Master(r.Context(), id)
+		if err != nil {
+			http.Error(w, err.Error(), 502)
+			return
+		}
+		w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
+		w.Write(body)
+	}
+}
+func mediaManifest(service manifest.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, err := uuid.Parse(chi.URLParam(r, "id"))
+		if err != nil {
+			http.Error(w, "id inválido", 400)
+			return
+		}
+		body, err := service.Media(r.Context(), id, chi.URLParam(r, "variant"), time.Now().UTC())
+		if err != nil {
+			http.Error(w, err.Error(), 502)
+			return
+		}
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
+		w.Write(body)
 	}
 }
 func writeJSON(w http.ResponseWriter, status int, value any) {
