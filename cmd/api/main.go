@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"log"
+	"log/slog"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -20,6 +22,7 @@ import (
 	"github.com/vod2live/cyonlive_vod2live/internal/health"
 	"github.com/vod2live/cyonlive_vod2live/internal/manifest"
 	"github.com/vod2live/cyonlive_vod2live/internal/metrics"
+	"github.com/vod2live/cyonlive_vod2live/internal/observability"
 	"github.com/vod2live/cyonlive_vod2live/internal/playout"
 	"github.com/vod2live/cyonlive_vod2live/internal/ratelimit"
 	"github.com/vod2live/cyonlive_vod2live/internal/schedule"
@@ -28,6 +31,7 @@ import (
 
 func main() {
 	cfg := config.Load()
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	pool, err := db.Open(context.Background(), cfg.DatabaseURL)
 	if err != nil {
 		log.Fatalf("database: %v", err)
@@ -42,6 +46,7 @@ func main() {
 	apiMetrics := &metrics.Metrics{}
 	limiter := ratelimit.New(cfg.RateLimitPerMinute)
 	r := chi.NewRouter()
+	r.Use(observability.Middleware(logger))
 	r.Use(security.Headers)
 	r.Use(apiMetrics.Middleware)
 	r.Get("/healthz", health.Handler)

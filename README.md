@@ -87,3 +87,7 @@ Manifests HLS têm limite de tamanho configurável por `HLS_MAX_MANIFEST_BYTES` 
 ## Fase 6 — proteção operacional da API
 
 Os endpoints `/v1/*` possuem rate limiting por IP, com limite padrão de 120 requisições por minuto configurável por `RATE_LIMIT_PER_MINUTE`. Quando excedido, retornam `429` com `Retry-After`. A API também envia headers básicos de segurança, incluindo `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy` e `Permissions-Policy`.
+
+## Fase 7 — rastreabilidade operacional
+
+Cada resposta HTTP recebe `X-Request-ID`. Se o cliente enviar esse header, o mesmo valor é preservado; caso contrário, a API gera um identificador aleatório. Cada requisição é registrada em JSON via `slog`, incluindo método, caminho, status, duração e request ID, facilitando correlação em agregadores de logs.
