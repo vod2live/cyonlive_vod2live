@@ -1,6 +1,6 @@
 APP=vod2live
 
-.PHONY: run test fmt compose-up compose-down e2e
+.PHONY: run test fmt compose-up compose-down e2e contract
 
 run:
 	go run ./cmd/api
@@ -19,3 +19,6 @@ compose-down:
 
 e2e:
 	tests/integration/e2e.sh
+
+contract:
+	tests/integration/contract.sh

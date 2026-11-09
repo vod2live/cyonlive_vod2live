@@ -99,3 +99,7 @@ API e worker de playout tratam `SIGTERM` e `SIGINT`. A API deixa de aceitar nova
 ## Fase 9 — resiliência de dependências
 
 PostgreSQL e Redis usam retry com backoff exponencial na inicialização. O processo tenta até oito vezes, aumenta o intervalo entre tentativas até cinco segundos e respeita cancelamento por sinal, evitando falha prematura durante o boot ordenado dos serviços.
+
+## Fase 10 — contrato HTTP
+
+O teste `tests/integration/contract.sh` valida o contrato operacional mínimo: request ID, headers de segurança, proteção `401` dos endpoints administrativos, acesso autenticado a canais e exposição das métricas Prometheus. Execute com `make contract` quando a stack estiver ativa.

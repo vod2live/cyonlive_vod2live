@@ -18,6 +18,7 @@ jobs:
       - run: docker compose build api playout
       - run: docker compose up -d postgres redis hls-fixture api playout
       - run: ./tests/integration/e2e.sh
+      - run: ./tests/integration/contract.sh
       - if: always()
         run: docker compose logs --no-color
       - if: always()
