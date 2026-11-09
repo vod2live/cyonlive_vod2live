@@ -11,12 +11,13 @@ const (
 )
 
 type Asset struct {
-	ID         uuid.UUID `json:"id"`
-	Title      string    `json:"title"`
-	HLSURL     string    `json:"hls_url"`
-	Status     Status    `json:"status"`
-	DurationMS int64     `json:"duration_ms,omitempty"`
-	Metadata   any       `json:"metadata,omitempty"`
+	ID             uuid.UUID `json:"id"`
+	OrganizationID uuid.UUID `json:"organization_id"`
+	Title          string    `json:"title"`
+	HLSURL         string    `json:"hls_url"`
+	Status         Status    `json:"status"`
+	DurationMS     int64     `json:"duration_ms,omitempty"`
+	Metadata       any       `json:"metadata,omitempty"`
 }
 
 type Repository interface {

@@ -24,6 +24,9 @@ func (c Config) Validate() error {
 	if c.PlaybackTokenTTLSeconds <= 0 {
 		return fmt.Errorf("PLAYBACK_TOKEN_TTL_SECONDS deve ser positivo")
 	}
+	if c.AuthTokenTTLSeconds <= 0 {
+		return fmt.Errorf("AUTH_TOKEN_TTL_SECONDS deve ser positivo")
+	}
 	if c.Environment == "production" {
 		if c.APIKey == "" {
 			return fmt.Errorf("API_KEY é obrigatório em production")
@@ -33,6 +36,12 @@ func (c Config) Validate() error {
 		}
 		if len(c.PlaybackTokenSecret) < 32 || c.PlaybackTokenSecret == "development-only-playback-secret-change-me" {
 			return fmt.Errorf("PLAYBACK_TOKEN_SECRET precisa ser um segredo único com pelo menos 32 bytes em production")
+		}
+		if len(c.AuthTokenSecret) < 32 || c.AuthTokenSecret == "development-only-auth-secret-change-me-rotate-before-production" {
+			return fmt.Errorf("AUTH_TOKEN_SECRET precisa ser um segredo único com pelo menos 32 bytes em production")
+		}
+		if c.AuthTokenSecret == c.PlaybackTokenSecret {
+			return fmt.Errorf("AUTH_TOKEN_SECRET deve ser diferente de PLAYBACK_TOKEN_SECRET")
 		}
 	}
 	return nil

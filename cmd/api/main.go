@@ -24,6 +24,7 @@ import (
 	"github.com/vod2live/cyonlive_vod2live/internal/config"
 	"github.com/vod2live/cyonlive_vod2live/internal/db"
 	"github.com/vod2live/cyonlive_vod2live/internal/health"
+	"github.com/vod2live/cyonlive_vod2live/internal/identity"
 	"github.com/vod2live/cyonlive_vod2live/internal/manifest"
 	"github.com/vod2live/cyonlive_vod2live/internal/metrics"
 	"github.com/vod2live/cyonlive_vod2live/internal/observability"
@@ -59,6 +60,12 @@ func main() {
 		log.Fatalf("playback configuration: %v", err)
 	}
 	playbackHandler := playback.Handler{Signer: playbackSigner, Manifests: manifests, AllowPrivate: cfg.AllowPrivateHLS}
+	sessionTokens, err := auth.NewTokenService(cfg.AuthTokenSecret, time.Duration(cfg.AuthTokenTTLSeconds)*time.Second)
+	if err != nil {
+		log.Fatalf("auth configuration: %v", err)
+	}
+	identities := identity.Repository{Pool: pool}
+	identityHandler := identity.Handler{Repository: identities, Tokens: sessionTokens, BootstrapKey: cfg.APIKey}
 	playoutStore := playout.RedisStore{Client: redisClient}
 	apiMetrics := &metrics.Metrics{}
 	limiter := ratelimit.New(cfg.RateLimitPerMinute)
@@ -98,23 +105,39 @@ func main() {
 	})
 	r.Route("/v1", func(v1 chi.Router) {
 		v1.Use(limiter.Middleware)
-		v1.Use(auth.APIKey(cfg.APIKey))
-		v1.Post("/assets", createAsset(assets))
-		v1.Get("/assets/{id}", getAsset(assets))
-		v1.Post("/assets/{id}/validate", validateAsset(assets))
-		v1.Post("/channels", createChannel(channels))
-		v1.Get("/channels", listChannels(channels))
-		v1.Get("/channels/{id}", getChannel(channels))
-		v1.Post("/channels/{id}/start", updateChannelStatus(channels, "running"))
-		v1.Post("/channels/{id}/stop", updateChannelStatus(channels, "stopped"))
-		v1.Get("/channels/{id}/status", channelStatus(channels, playoutStore))
-		v1.Get("/channels/{id}/master.m3u8", masterManifest(manifests))
-		v1.Get("/channels/{id}/media/{variant}.m3u8", mediaManifest(manifests))
-		v1.Post("/channels/{id}/playback", issuePlaybackLink(channels, playbackSigner))
-		v1.Post("/channels/{id}/schedule", createScheduleItem(channels, assets, schedules))
-		v1.Get("/channels/{id}/schedule", listSchedule(schedules))
-		v1.Patch("/schedule/{id}", updateScheduleItem(schedules))
-		v1.Delete("/schedule/{id}", deleteScheduleItem(schedules))
+		v1.With(auth.APIKey(cfg.APIKey)).Post("/auth/bootstrap", identityHandler.Bootstrap)
+		v1.Post("/auth/login", identityHandler.Login)
+		v1.Group(func(api chi.Router) {
+			api.Use(auth.Bearer(sessionTokens, identities))
+			api.Use(identity.AuditMiddleware(pool))
+			api.Get("/organizations", identityHandler.ListOrganizations)
+			api.Post("/organizations", identityHandler.CreateOrganization)
+			api.With(auth.RequireRoles(auth.RoleAdmin)).Get("/users", identityHandler.ListUsers)
+			api.With(auth.RequireRoles(auth.RoleAdmin)).Post("/users", identityHandler.CreateUser)
+			api.With(auth.RequireRoles(auth.RoleAdmin)).Patch("/users/{userID}/role", identityHandler.UpdateUserRole)
+			api.With(auth.RequireRoles(auth.RoleAdmin)).Delete("/users/{userID}", identityHandler.RemoveUser)
+			api.Get("/teams", identityHandler.ListTeams)
+			api.With(auth.RequireRoles(auth.RoleAdmin)).Post("/teams", identityHandler.CreateTeam)
+			api.With(auth.RequireRoles(auth.RoleAdmin)).Post("/teams/{teamID}/members", identityHandler.AddTeamMember)
+			api.With(auth.RequireRoles(auth.RoleAdmin)).Delete("/teams/{teamID}/members/{userID}", identityHandler.RemoveTeamMember)
+
+			api.With(auth.RequireRoles(auth.RoleAdmin, auth.RoleEditor)).Post("/assets", createAsset(assets))
+			api.Get("/assets/{id}", getAsset(assets))
+			api.With(auth.RequireRoles(auth.RoleAdmin, auth.RoleEditor)).Post("/assets/{id}/validate", validateAsset(assets))
+			api.With(auth.RequireRoles(auth.RoleAdmin, auth.RoleEditor)).Post("/channels", createChannel(channels))
+			api.Get("/channels", listChannels(channels))
+			api.Get("/channels/{id}", getChannel(channels))
+			api.With(auth.RequireRoles(auth.RoleAdmin, auth.RoleOperator)).Post("/channels/{id}/start", updateChannelStatus(channels, "running"))
+			api.With(auth.RequireRoles(auth.RoleAdmin, auth.RoleOperator)).Post("/channels/{id}/stop", updateChannelStatus(channels, "stopped"))
+			api.Get("/channels/{id}/status", channelStatus(channels, playoutStore))
+			api.Get("/channels/{id}/master.m3u8", masterManifest(channels, manifests))
+			api.Get("/channels/{id}/media/{variant}.m3u8", mediaManifest(channels, manifests))
+			api.With(auth.RequireRoles(auth.RoleAdmin, auth.RoleOperator)).Post("/channels/{id}/playback", issuePlaybackLink(channels, playbackSigner))
+			api.With(auth.RequireRoles(auth.RoleAdmin, auth.RoleEditor)).Post("/channels/{id}/schedule", createScheduleItem(channels, assets, schedules))
+			api.Get("/channels/{id}/schedule", listSchedule(channels, schedules))
+			api.With(auth.RequireRoles(auth.RoleAdmin, auth.RoleEditor)).Patch("/schedule/{id}", updateScheduleItem(schedules))
+			api.With(auth.RequireRoles(auth.RoleAdmin, auth.RoleEditor)).Delete("/schedule/{id}", deleteScheduleItem(schedules))
+		})
 	})
 	server := &http.Server{Addr: cfg.HTTPAddr, Handler: r, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 60 * time.Second}
 	serverErr := make(chan error, 1)
@@ -142,13 +165,18 @@ type assetRequest struct {
 
 func createAsset(repo asset.PostgresRepository) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		principal, ok := auth.PrincipalFrom(r.Context())
+		if !ok {
+			http.Error(w, "não autorizado", http.StatusUnauthorized)
+			return
+		}
 		var req assetRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Title) == "" || strings.TrimSpace(req.HLSURL) == "" {
 			http.Error(w, "title e hls_url são obrigatórios", 400)
 			return
 		}
-		item := asset.Asset{ID: uuid.New(), Title: req.Title, HLSURL: strings.TrimSpace(req.HLSURL), Status: asset.StatusPending}
-		if err := repo.Create(r.Context(), item); err != nil {
+		item := asset.Asset{ID: uuid.New(), OrganizationID: principal.OrganizationID, Title: req.Title, HLSURL: strings.TrimSpace(req.HLSURL), Status: asset.StatusPending}
+		if err := repo.Create(r.Context(), principal.OrganizationID, item); err != nil {
 			http.Error(w, "erro ao criar asset", 500)
 			return
 		}
@@ -162,7 +190,12 @@ func getAsset(repo asset.PostgresRepository) http.HandlerFunc {
 			http.Error(w, "id inválido", 400)
 			return
 		}
-		item, err := repo.FindByID(r.Context(), id)
+		principal, ok := auth.PrincipalFrom(r.Context())
+		if !ok {
+			http.Error(w, "não autorizado", http.StatusUnauthorized)
+			return
+		}
+		item, err := repo.FindByIDInOrg(r.Context(), principal.OrganizationID, id)
 		if err != nil {
 			http.Error(w, "asset não encontrado", 404)
 			return
@@ -177,7 +210,12 @@ func validateAsset(repo asset.PostgresRepository) http.HandlerFunc {
 			http.Error(w, "id inválido", 400)
 			return
 		}
-		item, err := repo.FindByID(r.Context(), id)
+		principal, ok := auth.PrincipalFrom(r.Context())
+		if !ok {
+			http.Error(w, "não autorizado", http.StatusUnauthorized)
+			return
+		}
+		item, err := repo.FindByIDInOrg(r.Context(), principal.OrganizationID, id)
 		if err != nil {
 			http.Error(w, "asset não encontrado", 404)
 			return
@@ -185,11 +223,11 @@ func validateAsset(repo asset.PostgresRepository) http.HandlerFunc {
 		cfg := config.Load()
 		inspection, err := (asset.HLSInspector{AllowPrivate: cfg.AllowPrivateHLS, MaxManifestBytes: cfg.HLSMaxManifestBytes, Timeout: time.Duration(cfg.HLSRequestTimeoutSecs) * time.Second}).Inspect(item.HLSURL)
 		if err != nil {
-			_ = repo.UpdateStatus(r.Context(), id, asset.StatusInvalid, 0, map[string]string{"error": err.Error()})
+			_ = repo.UpdateStatusInOrg(r.Context(), principal.OrganizationID, id, asset.StatusInvalid, 0, map[string]string{"error": err.Error()})
 			http.Error(w, err.Error(), 422)
 			return
 		}
-		_ = repo.UpdateStatus(r.Context(), id, asset.StatusValid, inspection.DurationMS, inspection)
+		_ = repo.UpdateStatusInOrg(r.Context(), principal.OrganizationID, id, asset.StatusValid, inspection.DurationMS, inspection)
 		writeJSON(w, 200, inspection)
 	}
 }
@@ -202,6 +240,11 @@ type channelRequest struct {
 
 func createChannel(repo channel.PostgresRepository) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		principal, ok := auth.PrincipalFrom(r.Context())
+		if !ok {
+			http.Error(w, "não autorizado", http.StatusUnauthorized)
+			return
+		}
 		var req channelRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Name) == "" {
 			http.Error(w, "name é obrigatório", 400)
@@ -211,7 +254,7 @@ func createChannel(repo channel.PostgresRepository) http.HandlerFunc {
 		if slug == "" {
 			slug = channel.NormalizeSlug(req.Name)
 		}
-		item := channel.Channel{ID: uuid.New(), Name: req.Name, Slug: slug, Status: "draft", LoopEnabled: req.LoopEnabled}
+		item := channel.Channel{ID: uuid.New(), OrganizationID: principal.OrganizationID, Name: req.Name, Slug: slug, Status: "draft", LoopEnabled: req.LoopEnabled}
 		if err := repo.Create(r.Context(), item); err != nil {
 			http.Error(w, "erro ao criar canal", 500)
 			return
@@ -221,7 +264,12 @@ func createChannel(repo channel.PostgresRepository) http.HandlerFunc {
 }
 func listChannels(repo channel.PostgresRepository) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		items, err := repo.List(r.Context())
+		principal, ok := auth.PrincipalFrom(r.Context())
+		if !ok {
+			http.Error(w, "não autorizado", http.StatusUnauthorized)
+			return
+		}
+		items, err := repo.ListInOrg(r.Context(), principal.OrganizationID)
 		if err != nil {
 			http.Error(w, "erro ao listar canais", 500)
 			return
@@ -236,7 +284,12 @@ func getChannel(repo channel.PostgresRepository) http.HandlerFunc {
 			http.Error(w, "id inválido", 400)
 			return
 		}
-		item, err := repo.FindByID(r.Context(), id)
+		principal, ok := auth.PrincipalFrom(r.Context())
+		if !ok {
+			http.Error(w, "não autorizado", http.StatusUnauthorized)
+			return
+		}
+		item, err := repo.FindByIDInOrg(r.Context(), principal.OrganizationID, id)
 		if err != nil {
 			http.Error(w, "canal não encontrado", 404)
 			return
@@ -252,11 +305,16 @@ func updateChannelStatus(repo channel.PostgresRepository, status string) http.Ha
 			http.Error(w, "id inválido", 400)
 			return
 		}
-		if _, err = repo.FindByID(r.Context(), id); err != nil {
+		principal, ok := auth.PrincipalFrom(r.Context())
+		if !ok {
+			http.Error(w, "não autorizado", http.StatusUnauthorized)
+			return
+		}
+		if _, err = repo.FindByIDInOrg(r.Context(), principal.OrganizationID, id); err != nil {
 			http.Error(w, "canal não encontrado", 404)
 			return
 		}
-		if err = repo.UpdateStatus(r.Context(), id, status); err != nil {
+		if err = repo.UpdateStatusInOrg(r.Context(), principal.OrganizationID, id, status); err != nil {
 			http.Error(w, "erro ao atualizar canal", 500)
 			return
 		}
@@ -271,7 +329,12 @@ func channelStatus(repo channel.PostgresRepository, store playout.RedisStore) ht
 			http.Error(w, "id inválido", 400)
 			return
 		}
-		item, err := repo.FindByID(r.Context(), id)
+		principal, ok := auth.PrincipalFrom(r.Context())
+		if !ok {
+			http.Error(w, "não autorizado", http.StatusUnauthorized)
+			return
+		}
+		item, err := repo.FindByIDInOrg(r.Context(), principal.OrganizationID, id)
 		if err != nil {
 			http.Error(w, "canal não encontrado", 404)
 			return
@@ -294,12 +357,17 @@ type scheduleRequest struct {
 
 func createScheduleItem(channels channel.PostgresRepository, assets asset.PostgresRepository, repo schedule.PostgresRepository) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		principal, ok := auth.PrincipalFrom(r.Context())
+		if !ok {
+			http.Error(w, "não autorizado", http.StatusUnauthorized)
+			return
+		}
 		channelID, err := uuid.Parse(chi.URLParam(r, "id"))
 		if err != nil {
 			http.Error(w, "id de canal inválido", 400)
 			return
 		}
-		if _, err = channels.FindByID(r.Context(), channelID); err != nil {
+		if _, err = channels.FindByIDInOrg(r.Context(), principal.OrganizationID, channelID); err != nil {
 			http.Error(w, "canal não encontrado", 404)
 			return
 		}
@@ -308,7 +376,7 @@ func createScheduleItem(channels channel.PostgresRepository, assets asset.Postgr
 			http.Error(w, "asset_id e starts_at são obrigatórios", 400)
 			return
 		}
-		assetItem, err := assets.FindByID(r.Context(), req.AssetID)
+		assetItem, err := assets.FindByIDInOrg(r.Context(), principal.OrganizationID, req.AssetID)
 		if err != nil || assetItem.Status != asset.StatusValid {
 			http.Error(w, "asset precisa estar validado", 422)
 			return
@@ -317,7 +385,7 @@ func createScheduleItem(channels channel.PostgresRepository, assets asset.Postgr
 			derived := req.StartsAt.Add(time.Duration(assetItem.DurationMS) * time.Millisecond)
 			req.EndsAt = &derived
 		}
-		item := schedule.Item{ID: uuid.New(), ChannelID: channelID, AssetID: req.AssetID, StartsAt: req.StartsAt, EndsAt: req.EndsAt, Position: req.Position, Enabled: true}
+		item := schedule.Item{ID: uuid.New(), OrganizationID: principal.OrganizationID, ChannelID: channelID, AssetID: req.AssetID, StartsAt: req.StartsAt, EndsAt: req.EndsAt, Position: req.Position, Enabled: true}
 		if err := repo.Create(r.Context(), item); err != nil {
 			if errors.Is(err, context.Canceled) {
 				http.Error(w, "requisição cancelada", 499)
@@ -331,11 +399,20 @@ func createScheduleItem(channels channel.PostgresRepository, assets asset.Postgr
 		writeJSON(w, 201, item)
 	}
 }
-func listSchedule(repo schedule.PostgresRepository) http.HandlerFunc {
+func listSchedule(channels channel.PostgresRepository, repo schedule.PostgresRepository) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		principal, ok := auth.PrincipalFrom(r.Context())
+		if !ok {
+			http.Error(w, "não autorizado", http.StatusUnauthorized)
+			return
+		}
 		id, err := uuid.Parse(chi.URLParam(r, "id"))
 		if err != nil {
 			http.Error(w, "id inválido", 400)
+			return
+		}
+		if _, err := channels.FindByIDInOrg(r.Context(), principal.OrganizationID, id); err != nil {
+			http.Error(w, "canal não encontrado", http.StatusNotFound)
 			return
 		}
 		items, err := repo.List(r.Context(), id)
@@ -356,6 +433,11 @@ type scheduleUpdateRequest struct {
 
 func updateScheduleItem(repo schedule.PostgresRepository) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		principal, ok := auth.PrincipalFrom(r.Context())
+		if !ok {
+			http.Error(w, "não autorizado", http.StatusUnauthorized)
+			return
+		}
 		id, err := uuid.Parse(chi.URLParam(r, "id"))
 		if err != nil {
 			http.Error(w, "id inválido", 400)
@@ -366,8 +448,10 @@ func updateScheduleItem(repo schedule.PostgresRepository) http.HandlerFunc {
 			http.Error(w, "starts_at é obrigatório", 400)
 			return
 		}
-		if err = repo.Update(r.Context(), id, req.StartsAt, req.EndsAt, req.Position, req.Enabled); err != nil {
-			if strings.Contains(err.Error(), "schedule conflict") {
+		if err = repo.Update(r.Context(), principal.OrganizationID, id, req.StartsAt, req.EndsAt, req.Position, req.Enabled); err != nil {
+			if errors.Is(err, schedule.ErrNotFound) {
+				http.Error(w, "item não encontrado", http.StatusNotFound)
+			} else if strings.Contains(err.Error(), "schedule conflict") {
 				http.Error(w, "conflito de horário na grade", 409)
 			} else {
 				http.Error(w, "erro ao atualizar item da grade", 500)
@@ -380,12 +464,21 @@ func updateScheduleItem(repo schedule.PostgresRepository) http.HandlerFunc {
 
 func deleteScheduleItem(repo schedule.PostgresRepository) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		principal, ok := auth.PrincipalFrom(r.Context())
+		if !ok {
+			http.Error(w, "não autorizado", http.StatusUnauthorized)
+			return
+		}
 		id, err := uuid.Parse(chi.URLParam(r, "id"))
 		if err != nil {
 			http.Error(w, "id inválido", 400)
 			return
 		}
-		if err = repo.Delete(r.Context(), id); err != nil {
+		if err = repo.Delete(r.Context(), principal.OrganizationID, id); err != nil {
+			if errors.Is(err, schedule.ErrNotFound) {
+				http.Error(w, "item não encontrado", http.StatusNotFound)
+				return
+			}
 			http.Error(w, "erro ao remover item da grade", 500)
 			return
 		}
@@ -393,11 +486,20 @@ func deleteScheduleItem(repo schedule.PostgresRepository) http.HandlerFunc {
 	}
 }
 
-func masterManifest(service manifest.Service) http.HandlerFunc {
+func masterManifest(channels channel.PostgresRepository, service manifest.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		principal, ok := auth.PrincipalFrom(r.Context())
+		if !ok {
+			http.Error(w, "não autorizado", http.StatusUnauthorized)
+			return
+		}
 		id, err := uuid.Parse(chi.URLParam(r, "id"))
 		if err != nil {
 			http.Error(w, "id inválido", 400)
+			return
+		}
+		if _, err := channels.FindByIDInOrg(r.Context(), principal.OrganizationID, id); err != nil {
+			http.Error(w, "canal não encontrado", http.StatusNotFound)
 			return
 		}
 		body, err := service.Master(r.Context(), id)
@@ -409,11 +511,20 @@ func masterManifest(service manifest.Service) http.HandlerFunc {
 		w.Write(body)
 	}
 }
-func mediaManifest(service manifest.Service) http.HandlerFunc {
+func mediaManifest(channels channel.PostgresRepository, service manifest.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		principal, ok := auth.PrincipalFrom(r.Context())
+		if !ok {
+			http.Error(w, "não autorizado", http.StatusUnauthorized)
+			return
+		}
 		id, err := uuid.Parse(chi.URLParam(r, "id"))
 		if err != nil {
 			http.Error(w, "id inválido", 400)
+			return
+		}
+		if _, err := channels.FindByIDInOrg(r.Context(), principal.OrganizationID, id); err != nil {
+			http.Error(w, "canal não encontrado", http.StatusNotFound)
 			return
 		}
 		body, err := service.Media(r.Context(), id, chi.URLParam(r, "variant"), time.Now().UTC())
@@ -439,7 +550,12 @@ func issuePlaybackLink(repo channel.PostgresRepository, signer *playback.Signer)
 			http.Error(w, "id inválido", http.StatusBadRequest)
 			return
 		}
-		if _, err = repo.FindByID(r.Context(), id); err != nil {
+		principal, ok := auth.PrincipalFrom(r.Context())
+		if !ok {
+			http.Error(w, "não autorizado", http.StatusUnauthorized)
+			return
+		}
+		if _, err = repo.FindByIDInOrg(r.Context(), principal.OrganizationID, id); err != nil {
 			http.Error(w, "canal não encontrado", http.StatusNotFound)
 			return
 		}

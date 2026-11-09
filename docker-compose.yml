@@ -23,6 +23,8 @@ services:
       API_KEY: ${API_KEY:-phase2-local-key}
       PLAYBACK_TOKEN_SECRET: ${PLAYBACK_TOKEN_SECRET:-development-only-playback-secret-change-me}
       PLAYBACK_TOKEN_TTL_SECONDS: ${PLAYBACK_TOKEN_TTL_SECONDS:-600}
+      AUTH_TOKEN_SECRET: ${AUTH_TOKEN_SECRET:-development-only-auth-secret-change-me-rotate-before-production}
+      AUTH_TOKEN_TTL_SECONDS: ${AUTH_TOKEN_TTL_SECONDS:-900}
       ALLOW_PRIVATE_HLS: ${ALLOW_PRIVATE_HLS:-true}
       HLS_MAX_MANIFEST_BYTES: ${HLS_MAX_MANIFEST_BYTES:-8388608}
       HLS_REQUEST_TIMEOUT_SECONDS: ${HLS_REQUEST_TIMEOUT_SECONDS:-15}

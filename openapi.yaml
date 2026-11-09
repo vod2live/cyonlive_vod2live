@@ -5,22 +5,25 @@ info:
   description: API para catálogo HLS, canais lineares e playout VOD2Live.
 servers:
   - url: http://localhost:8080
+security:
+  - BearerAuth: []
 paths:
   /healthz:
     get:
       summary: Liveness
+      security: []
       responses:
         '200': { description: Serviço ativo }
   /readyz:
     get:
       summary: Readiness de PostgreSQL e Redis
+      security: []
       responses:
         '200': { description: Dependências prontas }
         '503': { description: Dependência indisponível }
   /v1/assets:
     post:
       summary: Cadastrar asset HLS
-      security: [{ ApiKeyAuth: [] }]
       requestBody:
         required: true
         content:
@@ -31,7 +34,6 @@ paths:
   /v1/assets/{id}/validate:
     post:
       summary: Validar manifesto HLS
-      security: [{ ApiKeyAuth: [] }]
       parameters: [{ $ref: '#/components/parameters/Id' }]
       responses:
         '200': { description: Manifesto validado }
@@ -39,7 +41,6 @@ paths:
   /v1/channels:
     post:
       summary: Criar canal
-      security: [{ ApiKeyAuth: [] }]
       requestBody:
         required: true
         content:
@@ -48,7 +49,6 @@ paths:
       responses: { '201': { description: Canal criado } }
     get:
       summary: Listar canais
-      security: [{ ApiKeyAuth: [] }]
       responses: { '200': { description: Lista de canais } }
   /v1/channels/{id}/start:
     post:
@@ -91,8 +91,7 @@ paths:
   /v1/channels/{id}/playback:
     post:
       summary: Emitir URL temporária de playback para um canal
-      description: Endpoint administrativo protegido por API key. O link emitido é assinado por HMAC e expira conforme PLAYBACK_TOKEN_TTL_SECONDS.
-      security: [{ ApiKeyAuth: [] }]
+      description: Endpoint administrativo protegido por bearer token. O link emitido é assinado por HMAC e expira conforme PLAYBACK_TOKEN_TTL_SECONDS.
       parameters: [{ $ref: '#/components/parameters/Id' }]
       responses:
         '201':
@@ -107,9 +106,76 @@ paths:
                   playback_url: { type: string }
                   expires_at: { type: string, format: date-time }
         '404': { description: Canal não encontrado }
+  /v1/auth/bootstrap:
+    post:
+      summary: Criar o primeiro administrador da organização legada
+      description: Só funciona uma vez. Exige a API key de bootstrap; as rotas de negócio não aceitam mais essa chave.
+      security: [{ ApiKeyAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password, organization_name]
+              properties:
+                email: { type: string, format: email }
+                password: { type: string, minLength: 12, maxLength: 72 }
+                organization_name: { type: string }
+      responses: { '201': { description: Administrador criado e sessão emitida }, '409': { description: Bootstrap já concluído } }
+  /v1/auth/login:
+    post:
+      summary: Iniciar sessão e emitir token bearer
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string, format: email }
+                password: { type: string }
+                organization_id: { type: string, format: uuid }
+      responses: { '200': { description: Sessão bearer criada }, '401': { description: Credenciais inválidas } }
+  /v1/organizations:
+    get:
+      summary: Listar organizações do usuário
+      responses: { '200': { description: Organizações associadas ao usuário } }
+    post:
+      summary: Criar organização e tornar o usuário administrador
+      responses: { '201': { description: Organização criada } }
+  /v1/users:
+    get:
+      summary: Listar usuários da organização ativa
+      responses: { '200': { description: Usuários e papéis } }
+    post:
+      summary: Criar usuário da organização ativa
+      responses: { '201': { description: Usuário criado } }
+  /v1/users/{userID}/role:
+    patch:
+      summary: Alterar papel de membro
+      parameters:
+        - { name: userID, in: path, required: true, schema: { type: string, format: uuid } }
+      responses: { '204': { description: Papel atualizado }, '409': { description: Organização deve manter ao menos um administrador } }
+  /v1/teams:
+    get:
+      summary: Listar equipes da organização ativa
+      responses: { '200': { description: Equipes } }
+    post:
+      summary: Criar equipe
+      responses: { '201': { description: Equipe criada } }
+  /v1/teams/{teamID}/members:
+    post:
+      summary: Adicionar membro à equipe, apenas dentro da organização ativa
+      parameters:
+        - { name: teamID, in: path, required: true, schema: { type: string, format: uuid } }
+      responses: { '204': { description: Membro adicionado }, '500': { description: Equipe ou usuário não pertence à organização } }
   /playback/{channelID}/master.m3u8:
     get:
       summary: Manifesto master HLS público com assinatura
+      security: []
       parameters:
         - { name: channelID, in: path, required: true, schema: { type: string, format: uuid } }
         - { $ref: '#/components/parameters/PlaybackExpires' }
@@ -121,6 +187,7 @@ paths:
   /playback/{channelID}/media/{variant}.m3u8:
     get:
       summary: Manifesto de mídia HLS assinado
+      security: []
       parameters:
         - { name: channelID, in: path, required: true, schema: { type: string, format: uuid } }
         - { name: variant, in: path, required: true, schema: { type: string } }
@@ -133,6 +200,7 @@ paths:
   /playback/{channelID}/segment:
     get:
       summary: Proxy de segmento HLS com assinatura vinculada ao canal e à origem
+      security: []
       parameters:
         - { name: channelID, in: path, required: true, schema: { type: string, format: uuid } }
         - { name: u, in: query, required: true, schema: { type: string, format: byte } }
@@ -144,6 +212,10 @@ paths:
         '410': { description: Token expirado }
 components:
   securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
     ApiKeyAuth:
       type: apiKey
       in: header

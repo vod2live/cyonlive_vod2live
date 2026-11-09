@@ -70,7 +70,7 @@ O CI executa `go test ./...`, constrói os serviços Docker e roda o fluxo end-t
 
 ## Fase 2 — segurança inicial
 
-Os endpoints `/v1/*` aceitam `X-API-Key` ou `Authorization: Bearer <API_KEY>`. Configure `API_KEY` como secret no ambiente; quando vazio, o middleware permanece aberto apenas para desenvolvimento local. Os endpoints `/healthz` e `/readyz` continuam públicos para probes de infraestrutura.
+Os endpoints de negócio `/v1/*` agora exigem `Authorization: Bearer <access_token>`. `API_KEY` permanece somente para o bootstrap inicial do primeiro administrador; não é aceito nas rotas de conteúdo. `/healthz`, `/readyz`, `/metrics` e `/version` permanecem públicos para operação.
 
 ## Fase 3 — observabilidade inicial
 
@@ -102,11 +102,11 @@ PostgreSQL e Redis usam retry com backoff exponencial na inicialização. O proc
 
 ## Fase 10 — contrato HTTP
 
-O teste `tests/integration/contract.sh` valida o contrato operacional mínimo: request ID, headers de segurança, proteção `401` dos endpoints administrativos, acesso autenticado a canais e exposição das métricas Prometheus. Execute com `make contract` quando a stack estiver ativa.
+Os testes de integração criam o administrador por bootstrap, fazem login bearer e verificam o acesso autenticado. O contrato valida request ID, headers de segurança, rejeição de chamadas anônimas e da API key antiga, acesso autenticado a canais e métricas Prometheus.
 
 ## Fase 11 — configuração segura por ambiente
 
-`APP_ENV=production` ativa validações fail-fast: `API_KEY` torna-se obrigatório, `ALLOW_PRIVATE_HLS` precisa estar desativado e os limites de ingestão, timeout e rate limit devem ser positivos. A aplicação encerra antes de abrir portas quando a configuração é inválida.
+`APP_ENV=production` ativa validações fail-fast: `API_KEY` de bootstrap é obrigatório; `PLAYBACK_TOKEN_SECRET` e `AUTH_TOKEN_SECRET` precisam ser diferentes entre si, únicos para a instalação e ter pelo menos 32 bytes; `ALLOW_PRIVATE_HLS` precisa estar desativado e os TTLs/limites devem ser positivos. A aplicação encerra antes de abrir portas quando a configuração é inválida.
 
 ## Fase 12 — diagnóstico e versão
 
@@ -114,7 +114,7 @@ O endpoint público `GET /version` retorna versão, commit e horário de build. 
 
 ## Fase 13 — autenticação de playback HLS
 
-O endpoint administrativo `POST /v1/channels/{id}/playback` emite, mediante `X-API-Key`, uma URL temporária específica para o canal. A resposta inclui `playback_url` relativo e `expires_at`; o player acessa o link sem receber nem expor a API key. O master, as variantes e cada segmento usam assinaturas HMAC-SHA256 vinculadas ao canal e ao recurso. Tokens ausentes ou inválidos recebem `403`; tokens expirados recebem `410 Gone`.
+O endpoint administrativo `POST /v1/channels/{id}/playback` emite, mediante bearer token com papel `administrador` ou `operador`, uma URL temporária específica para o canal. A resposta inclui `playback_url` relativo e `expires_at`; o player acessa o link sem receber nem expor as credenciais de API. O master, as variantes e cada segmento usam assinaturas HMAC-SHA256 vinculadas ao canal e ao recurso. Tokens ausentes ou inválidos recebem `403`; tokens expirados recebem `410 Gone`.
 
 O master e as media playlists são servidos publicamente em `/playback/{channelID}/master.m3u8` e `/playback/{channelID}/media/{variant}.m3u8`. As URLs dos segmentos são reescritas para `/playback/{channelID}/segment`, que valida a assinatura e faz proxy da origem HLS; as respostas de playback usam `Cache-Control: private, no-store` e `Referrer-Policy: no-referrer`. O proxy restringe URLs a HTTP(S), bloqueia endereços privados quando `ALLOW_PRIVATE_HLS=false` e não segue redirecionamentos.
 
@@ -123,8 +123,18 @@ Configure `PLAYBACK_TOKEN_SECRET` como segredo aleatório com pelo menos 32 byte
 Exemplo de emissão:
 
 ```sh
-curl -X POST -H 'X-API-Key: <API_KEY>' \
+curl -X POST -H 'Authorization: Bearer <ACCESS_TOKEN>' \
   http://localhost:8080/v1/channels/<CHANNEL_ID>/playback
 ```
 
 O contrato está descrito em [`openapi.yaml`](./openapi.yaml) e os testes de assinatura, expiração, escopo por canal/recurso, reescrita de manifest e proxy de segmentos estão em `internal/playback`.
+
+## Fase 14 — usuários, organizações e RBAC
+
+A migração `migrations/002_phase14_identity_tenant.sql` cria organizações, usuários com senha bcrypt, associação usuário-organização, equipes, membros de equipe e trilha de auditoria. Ela transfere os canais, assets e itens da grade existentes para a organização legada; as chaves estrangeiras compostas impedem que um item de grade associe canal e asset de organizações diferentes.
+
+Em uma instalação existente, aplique a migração antes de atualizar a API. No Compose, execute `docker compose exec -T postgres psql -U vod2live -d vod2live < migrations/002_phase14_identity_tenant.sql`; em instalações próprias, use a credencial de migração correspondente. Em banco novo, o Compose aplica os arquivos em `migrations/` durante a inicialização do volume. Para o primeiro acesso, use `POST /v1/auth/bootstrap` com `X-API-Key: <API_KEY>`, email, senha de pelo menos 12 caracteres e `organization_name`. Esse endpoint só funciona quando ainda não existe usuário; a chave antiga não autentica mais operações de negócio. Depois, use `POST /v1/auth/login` para receber um token bearer de 15 minutos. Se o usuário pertencer a várias organizações, informe `organization_id` no login.
+
+Papéis suportados: `administrador`, `operador`, `editor` e `visualizador`. Administradores gerenciam membros/papéis/equipes; podem criar usuários novos (senha obrigatória) ou associar usuários já cadastrados a outra organização (sem alterar sua senha). Editores administram assets, canais e grade; operadores iniciam/param canais e emitem links de playback; visualizadores têm acesso de leitura. A associação e o papel são recarregados do banco a cada chamada, então remoção e alteração de papel têm efeito imediato. As operações de escrita autenticadas registram ator, organização, ação, recurso, status HTTP e request ID em `audit_events`.
+
+As consultas HTTP de assets, canais e grade usam o tenant do token. As equipes e associações também são limitadas à organização, e o banco reforça o isolamento com chaves estrangeiras compostas. `AUTH_TOKEN_SECRET` deve ser um segredo aleatório e independente do segredo de playback; o Compose fornece um valor apenas para desenvolvimento. Para validar a suíte de integração em uma stack limpa, execute `docker compose down -v` e depois `docker compose up --build -d`, `./tests/integration/e2e.sh` e `./tests/integration/contract.sh`.

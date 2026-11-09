@@ -13,6 +13,8 @@ type Config struct {
 	APIKey                  string
 	PlaybackTokenSecret     string
 	PlaybackTokenTTLSeconds int
+	AuthTokenSecret         string
+	AuthTokenTTLSeconds     int
 	AllowPrivateHLS         bool
 	HLSMaxManifestBytes     int64
 	HLSRequestTimeoutSecs   int
@@ -29,6 +31,8 @@ func Load() Config {
 		APIKey:                  env("API_KEY", ""),
 		PlaybackTokenSecret:     env("PLAYBACK_TOKEN_SECRET", "development-only-playback-secret-change-me"),
 		PlaybackTokenTTLSeconds: intEnv("PLAYBACK_TOKEN_TTL_SECONDS", 600),
+		AuthTokenSecret:         env("AUTH_TOKEN_SECRET", "development-only-auth-secret-change-me-rotate-before-production"),
+		AuthTokenTTLSeconds:     intEnv("AUTH_TOKEN_TTL_SECONDS", 900),
 		AllowPrivateHLS:         boolEnv("ALLOW_PRIVATE_HLS", false),
 		HLSMaxManifestBytes:     int64Env("HLS_MAX_MANIFEST_BYTES", 8<<20),
 		HLSRequestTimeoutSecs:   intEnv("HLS_REQUEST_TIMEOUT_SECONDS", 15),
