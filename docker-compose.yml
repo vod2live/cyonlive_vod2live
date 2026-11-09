@@ -1,4 +1,10 @@
 services:
+  hls-fixture:
+    image: python:3.12-alpine
+    command: ["python", "-m", "http.server", "8000", "--directory", "/srv/hls"]
+    volumes:
+      - ./tests/fixtures/hls:/srv/hls:ro
+
   api:
     build:
       context: .
@@ -16,6 +22,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      hls-fixture:
+        condition: service_started
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/readyz"]
       interval: 10s
@@ -36,6 +44,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      hls-fixture:
+        condition: service_started
 
   postgres:
     image: postgres:16-alpine

@@ -61,3 +61,9 @@ curl http://localhost:8080/readyz
 A montagem real de manifests e a persistência dos repositórios estão isoladas por interfaces para implementação incremental. Não são aceitos MP4, MPEG-TS ou upload de arquivos.
 
 A especificação de integração está em [`openapi.yaml`](./openapi.yaml).
+
+## Fase 1 concluída
+
+A Fase 1 entrega um MVP executável com persistência PostgreSQL, cache e locks Redis, validação de master/media playlists HLS, grade com CRUD e detecção de conflitos, Manifest Builder, worker contínuo de playout, endpoints de operação, Docker Compose e pipeline CI. O fluxo completo pode ser validado com `docker compose up --build -d` seguido de `./tests/integration/e2e.sh`.
+
+O CI executa `go test ./...`, constrói os serviços Docker e roda o fluxo end-to-end com PostgreSQL, Redis e uma fixture HLS local. A Fase 2 deve tratar autenticação, segurança de URLs, SSAI/SCTE-35, observabilidade avançada e deploy de produção.

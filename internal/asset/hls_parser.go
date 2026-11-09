@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/vod2live/cyonlive_vod2live/pkg/hls"
 )
 
 type HLSInspector struct{ Client *http.Client }
@@ -26,13 +28,20 @@ type Inspection struct {
 }
 
 func (i HLSInspector) Inspect(rawURL string) (Inspection, error) {
-	u, err := url.Parse(rawURL)
-	if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" || !strings.HasSuffix(strings.ToLower(u.Path), ".m3u8") {
-		return Inspection{}, errors.New("hls_url deve ser uma URL http(s) apontando para um manifesto .m3u8")
-	}
 	client := i.Client
 	if client == nil {
 		client = &http.Client{Timeout: 15 * time.Second}
+	}
+	return inspectManifest(client, rawURL, 0)
+}
+
+func inspectManifest(client *http.Client, rawURL string, depth int) (Inspection, error) {
+	if depth > 2 {
+		return Inspection{}, errors.New("HLS manifest nesting exceeds supported depth")
+	}
+	u, err := url.Parse(rawURL)
+	if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" || !strings.HasSuffix(strings.ToLower(u.Path), ".m3u8") {
+		return Inspection{}, errors.New("hls_url deve ser uma URL http(s) apontando para um manifesto .m3u8")
 	}
 	resp, err := client.Get(rawURL)
 	if err != nil {
@@ -46,36 +55,66 @@ func (i HLSInspector) Inspect(rawURL string) (Inspection, error) {
 	if err != nil {
 		return Inspection{}, err
 	}
-	if !strings.HasPrefix(strings.TrimSpace(string(body)), "#EXTM3U") {
+	text := string(body)
+	if !strings.HasPrefix(strings.TrimSpace(text), "#EXTM3U") {
 		return Inspection{}, errors.New("manifesto não começa com #EXTM3U")
 	}
 	result := Inspection{URL: rawURL, ContentType: resp.Header.Get("Content-Type"), Bytes: int64(len(body))}
-	result.IsMaster = strings.Contains(string(body), "#EXT-X-STREAM-INF")
-	s := bufio.NewScanner(strings.NewReader(string(body)))
-	var duration float64
+	result.IsMaster = strings.Contains(text, "#EXT-X-STREAM-INF")
+	if result.IsMaster {
+		master, err := hls.ParseMaster(text)
+		if err != nil {
+			return Inspection{}, err
+		}
+		result.Variants = len(master.Variants)
+		if len(master.Variants) == 0 {
+			return Inspection{}, errors.New("master playlist sem variantes")
+		}
+		for _, variant := range master.Variants {
+			child, childErr := inspectManifest(client, hls.Resolve(rawURL, variant.URI), depth+1)
+			if childErr != nil {
+				return Inspection{}, fmt.Errorf("variante HLS inválida: %w", childErr)
+			}
+			if child.DurationMS > result.DurationMS {
+				result.DurationMS = child.DurationMS
+			}
+			result.Segments += child.Segments
+			if child.TargetDuration > result.TargetDuration {
+				result.TargetDuration = child.TargetDuration
+			}
+		}
+		return result, nil
+	}
+	media, err := hls.ParseMedia(text)
+	if err != nil {
+		return Inspection{}, err
+	}
+	result.TargetDuration = float64(media.TargetDuration)
+	for _, segment := range media.Segments {
+		result.DurationMS += int64(segment.Duration * 1000)
+		result.Segments++
+	}
+	if result.Segments == 0 {
+		return Inspection{}, errors.New("media playlist sem segmentos EXTINF")
+	}
+	return result, nil
+}
+
+// kept for compatibility with older callers that relied on the basic scanner behavior.
+func scanManifest(text string) (duration float64, segments int, target float64) {
+	s := bufio.NewScanner(strings.NewReader(text))
 	for s.Scan() {
 		line := strings.TrimSpace(s.Text())
-		if strings.HasPrefix(line, "#EXT-X-STREAM-INF") {
-			result.Variants++
-		}
 		if strings.HasPrefix(line, "#EXTINF:") {
-			value := strings.TrimPrefix(line, "#EXTINF:")
-			value = strings.SplitN(value, ",", 2)[0]
+			value := strings.TrimSuffix(strings.TrimPrefix(line, "#EXTINF:"), ",")
 			if d, e := strconv.ParseFloat(value, 64); e == nil {
 				duration += d
-				result.Segments++
+				segments++
 			}
 		}
 		if strings.HasPrefix(line, "#EXT-X-TARGETDURATION:") {
-			result.TargetDuration, _ = strconv.ParseFloat(strings.TrimPrefix(line, "#EXT-X-TARGETDURATION:"), 64)
+			target, _ = strconv.ParseFloat(strings.TrimPrefix(line, "#EXT-X-TARGETDURATION:"), 64)
 		}
 	}
-	result.DurationMS = int64(duration * 1000)
-	if !result.IsMaster && result.Segments == 0 {
-		return Inspection{}, errors.New("media playlist sem segmentos EXTINF")
-	}
-	if result.IsMaster && result.Variants == 0 {
-		return Inspection{}, errors.New("master playlist sem variantes")
-	}
-	return result, nil
+	return
 }
