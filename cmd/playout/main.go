@@ -4,6 +4,8 @@ import (
 	"context"
 	"log"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -17,7 +19,8 @@ import (
 
 func main() {
 	cfg := config.Load()
-	ctx := context.Background()
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 	pool, err := db.Open(ctx, cfg.DatabaseURL)
 	if err != nil {
 		log.Fatal(err)

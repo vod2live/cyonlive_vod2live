@@ -8,7 +8,9 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -71,8 +73,23 @@ func main() {
 		v1.Patch("/schedule/{id}", updateScheduleItem(schedules))
 		v1.Delete("/schedule/{id}", deleteScheduleItem(schedules))
 	})
-	log.Printf("vod2live api listening on %s", cfg.HTTPAddr)
-	log.Fatal(http.ListenAndServe(cfg.HTTPAddr, r))
+	server := &http.Server{Addr: cfg.HTTPAddr, Handler: r, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 60 * time.Second}
+	serverErr := make(chan error, 1)
+	go func() { log.Printf("vod2live api listening on %s", cfg.HTTPAddr); serverErr <- server.ListenAndServe() }()
+	stopCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	select {
+	case err := <-serverErr:
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Fatal(err)
+		}
+	case <-stopCtx.Done():
+	}
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := server.Shutdown(shutdownCtx); err != nil {
+		log.Printf("graceful shutdown: %v", err)
+	}
 }
 
 type assetRequest struct {

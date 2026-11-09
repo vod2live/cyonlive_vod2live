@@ -91,3 +91,7 @@ Os endpoints `/v1/*` possuem rate limiting por IP, com limite padrão de 120 req
 ## Fase 7 — rastreabilidade operacional
 
 Cada resposta HTTP recebe `X-Request-ID`. Se o cliente enviar esse header, o mesmo valor é preservado; caso contrário, a API gera um identificador aleatório. Cada requisição é registrada em JSON via `slog`, incluindo método, caminho, status, duração e request ID, facilitando correlação em agregadores de logs.
+
+## Fase 8 — lifecycle seguro
+
+API e worker de playout tratam `SIGTERM` e `SIGINT`. A API deixa de aceitar novas conexões e aguarda até 10 segundos para encerrar requisições em andamento; o worker cancela o loop de playout e libera recursos. O Compose reserva 15 segundos de `stop_grace_period` para o processo concluir o shutdown.

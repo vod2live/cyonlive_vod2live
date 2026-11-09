@@ -6,6 +6,7 @@ services:
       - ./tests/fixtures/hls:/srv/hls:ro
 
   api:
+    stop_grace_period: 15s
     build:
       context: .
       dockerfile: deployments/docker/Dockerfile
@@ -36,6 +37,7 @@ services:
       retries: 5
 
   playout:
+    stop_grace_period: 15s
     build:
       context: .
       dockerfile: deployments/docker/Dockerfile
