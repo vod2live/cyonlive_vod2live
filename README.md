@@ -83,3 +83,7 @@ O validador HLS bloqueia por padrão origens `localhost`, loopback, IPs privados
 ## Fase 5 — limites de ingestão HLS
 
 Manifests HLS têm limite de tamanho configurável por `HLS_MAX_MANIFEST_BYTES` (8 MiB por padrão), timeout por `HLS_REQUEST_TIMEOUT_SECONDS` (15 segundos por padrão) e no máximo três redirecionamentos HTTP. Respostas maiores ou excessivamente redirecionadas são rejeitadas antes do processamento.
+
+## Fase 6 — proteção operacional da API
+
+Os endpoints `/v1/*` possuem rate limiting por IP, com limite padrão de 120 requisições por minuto configurável por `RATE_LIMIT_PER_MINUTE`. Quando excedido, retornam `429` com `Retry-After`. A API também envia headers básicos de segurança, incluindo `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy` e `Permissions-Policy`.
