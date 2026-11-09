@@ -16,8 +16,10 @@ import (
 )
 
 type HLSInspector struct {
-	Client       *http.Client
-	AllowPrivate bool
+	Client           *http.Client
+	AllowPrivate     bool
+	MaxManifestBytes int64
+	Timeout          time.Duration
 }
 
 type Inspection struct {
@@ -32,14 +34,27 @@ type Inspection struct {
 }
 
 func (i HLSInspector) Inspect(rawURL string) (Inspection, error) {
+	maxBytes := i.MaxManifestBytes
+	if maxBytes <= 0 {
+		maxBytes = 8 << 20
+	}
 	client := i.Client
 	if client == nil {
-		client = &http.Client{Timeout: 15 * time.Second}
+		timeout := i.Timeout
+		if timeout <= 0 {
+			timeout = 15 * time.Second
+		}
+		client = &http.Client{Timeout: timeout, CheckRedirect: func(_ *http.Request, via []*http.Request) error {
+			if len(via) >= 3 {
+				return errors.New("limite de redirects HLS excedido")
+			}
+			return nil
+		}}
 	}
-	return inspectManifest(client, rawURL, 0, i.AllowPrivate)
+	return inspectManifest(client, rawURL, 0, i.AllowPrivate, maxBytes)
 }
 
-func inspectManifest(client *http.Client, rawURL string, depth int, allowPrivate bool) (Inspection, error) {
+func inspectManifest(client *http.Client, rawURL string, depth int, allowPrivate bool, maxBytes int64) (Inspection, error) {
 	if depth > 2 {
 		return Inspection{}, errors.New("HLS manifest nesting exceeds supported depth")
 	}
@@ -58,9 +73,15 @@ func inspectManifest(client *http.Client, rawURL string, depth int, allowPrivate
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return Inspection{}, fmt.Errorf("manifesto retornou HTTP %d", resp.StatusCode)
 	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+	if resp.ContentLength > maxBytes {
+		return Inspection{}, fmt.Errorf("manifesto excede o limite de %d bytes", maxBytes)
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBytes+1))
 	if err != nil {
 		return Inspection{}, err
+	}
+	if int64(len(body)) > maxBytes {
+		return Inspection{}, fmt.Errorf("manifesto excede o limite de %d bytes", maxBytes)
 	}
 	text := string(body)
 	if !strings.HasPrefix(strings.TrimSpace(text), "#EXTM3U") {
@@ -78,7 +99,7 @@ func inspectManifest(client *http.Client, rawURL string, depth int, allowPrivate
 			return Inspection{}, errors.New("master playlist sem variantes")
 		}
 		for _, variant := range master.Variants {
-			child, childErr := inspectManifest(client, hls.Resolve(rawURL, variant.URI), depth+1, allowPrivate)
+			child, childErr := inspectManifest(client, hls.Resolve(rawURL, variant.URI), depth+1, allowPrivate, maxBytes)
 			if childErr != nil {
 				return Inspection{}, fmt.Errorf("variante HLS inválida: %w", childErr)
 			}
@@ -107,7 +128,6 @@ func inspectManifest(client *http.Client, rawURL string, depth int, allowPrivate
 	return result, nil
 }
 
-// kept for compatibility with older callers that relied on the basic scanner behavior.
 func scanManifest(text string) (duration float64, segments int, target float64) {
 	s := bufio.NewScanner(strings.NewReader(text))
 	for s.Scan() {

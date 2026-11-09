@@ -17,6 +17,8 @@ services:
       REDIS_ADDR: redis:6379
       API_KEY: ${API_KEY:-phase2-local-key}
       ALLOW_PRIVATE_HLS: ${ALLOW_PRIVATE_HLS:-true}
+      HLS_MAX_MANIFEST_BYTES: ${HLS_MAX_MANIFEST_BYTES:-8388608}
+      HLS_REQUEST_TIMEOUT_SECONDS: ${HLS_REQUEST_TIMEOUT_SECONDS:-15}
     ports:
       - "8080:8080"
     depends_on:

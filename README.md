@@ -79,3 +79,7 @@ O endpoint público `/metrics` expõe métricas no formato Prometheus: requisiç
 ## Fase 4 — hardening de origens HLS
 
 O validador HLS bloqueia por padrão origens `localhost`, loopback, IPs privados, link-local, multicast e não especificados, reduzindo risco de SSRF. Para testes locais com o serviço `hls-fixture`, o Compose define `ALLOW_PRIVATE_HLS=true`; em produção, mantenha essa variável como `false`.
+
+## Fase 5 — limites de ingestão HLS
+
+Manifests HLS têm limite de tamanho configurável por `HLS_MAX_MANIFEST_BYTES` (8 MiB por padrão), timeout por `HLS_REQUEST_TIMEOUT_SECONDS` (15 segundos por padrão) e no máximo três redirecionamentos HTTP. Respostas maiores ou excessivamente redirecionadas são rejeitadas antes do processamento.
