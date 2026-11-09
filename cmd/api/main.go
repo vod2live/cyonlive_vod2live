@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 	"github.com/vod2live/cyonlive_vod2live/internal/asset"
+	"github.com/vod2live/cyonlive_vod2live/internal/auth"
 	"github.com/vod2live/cyonlive_vod2live/internal/channel"
 	"github.com/vod2live/cyonlive_vod2live/internal/config"
 	"github.com/vod2live/cyonlive_vod2live/internal/db"
@@ -38,21 +39,24 @@ func main() {
 	r := chi.NewRouter()
 	r.Get("/healthz", health.Handler)
 	r.Get("/readyz", health.ReadyHandler(pool, redisClient))
-	r.Post("/v1/assets", createAsset(assets))
-	r.Get("/v1/assets/{id}", getAsset(assets))
-	r.Post("/v1/assets/{id}/validate", validateAsset(assets))
-	r.Post("/v1/channels", createChannel(channels))
-	r.Get("/v1/channels", listChannels(channels))
-	r.Get("/v1/channels/{id}", getChannel(channels))
-	r.Post("/v1/channels/{id}/start", updateChannelStatus(channels, "running"))
-	r.Post("/v1/channels/{id}/stop", updateChannelStatus(channels, "stopped"))
-	r.Get("/v1/channels/{id}/status", channelStatus(channels, playoutStore))
-	r.Get("/v1/channels/{id}/master.m3u8", masterManifest(manifests))
-	r.Get("/v1/channels/{id}/media/{variant}.m3u8", mediaManifest(manifests))
-	r.Post("/v1/channels/{id}/schedule", createScheduleItem(channels, assets, schedules))
-	r.Get("/v1/channels/{id}/schedule", listSchedule(schedules))
-	r.Patch("/v1/schedule/{id}", updateScheduleItem(schedules))
-	r.Delete("/v1/schedule/{id}", deleteScheduleItem(schedules))
+	r.Route("/v1", func(v1 chi.Router) {
+		v1.Use(auth.APIKey(cfg.APIKey))
+		v1.Post("/assets", createAsset(assets))
+		v1.Get("/assets/{id}", getAsset(assets))
+		v1.Post("/assets/{id}/validate", validateAsset(assets))
+		v1.Post("/channels", createChannel(channels))
+		v1.Get("/channels", listChannels(channels))
+		v1.Get("/channels/{id}", getChannel(channels))
+		v1.Post("/channels/{id}/start", updateChannelStatus(channels, "running"))
+		v1.Post("/channels/{id}/stop", updateChannelStatus(channels, "stopped"))
+		v1.Get("/channels/{id}/status", channelStatus(channels, playoutStore))
+		v1.Get("/channels/{id}/master.m3u8", masterManifest(manifests))
+		v1.Get("/channels/{id}/media/{variant}.m3u8", mediaManifest(manifests))
+		v1.Post("/channels/{id}/schedule", createScheduleItem(channels, assets, schedules))
+		v1.Get("/channels/{id}/schedule", listSchedule(schedules))
+		v1.Patch("/schedule/{id}", updateScheduleItem(schedules))
+		v1.Delete("/schedule/{id}", deleteScheduleItem(schedules))
+	})
 	log.Printf("vod2live api listening on %s", cfg.HTTPAddr)
 	log.Fatal(http.ListenAndServe(cfg.HTTPAddr, r))
 }

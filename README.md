@@ -67,3 +67,7 @@ A especificação de integração está em [`openapi.yaml`](./openapi.yaml).
 A Fase 1 entrega um MVP executável com persistência PostgreSQL, cache e locks Redis, validação de master/media playlists HLS, grade com CRUD e detecção de conflitos, Manifest Builder, worker contínuo de playout, endpoints de operação, Docker Compose e pipeline CI. O fluxo completo pode ser validado com `docker compose up --build -d` seguido de `./tests/integration/e2e.sh`.
 
 O CI executa `go test ./...`, constrói os serviços Docker e roda o fluxo end-to-end com PostgreSQL, Redis e uma fixture HLS local. A Fase 2 deve tratar autenticação, segurança de URLs, SSAI/SCTE-35, observabilidade avançada e deploy de produção.
+
+## Fase 2 — segurança inicial
+
+Os endpoints `/v1/*` aceitam `X-API-Key` ou `Authorization: Bearer <API_KEY>`. Configure `API_KEY` como secret no ambiente; quando vazio, o middleware permanece aberto apenas para desenvolvimento local. Os endpoints `/healthz` e `/readyz` continuam públicos para probes de infraestrutura.

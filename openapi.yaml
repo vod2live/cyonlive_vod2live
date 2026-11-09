@@ -20,6 +20,7 @@ paths:
   /v1/assets:
     post:
       summary: Cadastrar asset HLS
+      security: [{ ApiKeyAuth: [] }]
       requestBody:
         required: true
         content:
@@ -30,6 +31,7 @@ paths:
   /v1/assets/{id}/validate:
     post:
       summary: Validar manifesto HLS
+      security: [{ ApiKeyAuth: [] }]
       parameters: [{ $ref: '#/components/parameters/Id' }]
       responses:
         '200': { description: Manifesto validado }
@@ -37,6 +39,7 @@ paths:
   /v1/channels:
     post:
       summary: Criar canal
+      security: [{ ApiKeyAuth: [] }]
       requestBody:
         required: true
         content:
@@ -45,6 +48,7 @@ paths:
       responses: { '201': { description: Canal criado } }
     get:
       summary: Listar canais
+      security: [{ ApiKeyAuth: [] }]
       responses: { '200': { description: Lista de canais } }
   /v1/channels/{id}/start:
     post:
@@ -85,6 +89,11 @@ paths:
       parameters: [{ $ref: '#/components/parameters/Id' }]
       responses: { '200': { description: Master HLS, content: { application/vnd.apple.mpegurl: {} } } }
 components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
   parameters:
     Id:
       name: id
