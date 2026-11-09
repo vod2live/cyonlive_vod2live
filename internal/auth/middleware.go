@@ -4,7 +4,12 @@ import (
 	"crypto/subtle"
 	"net/http"
 	"strings"
+	"sync/atomic"
 )
+
+var authFailures uint64
+
+func AuthFailures() uint64 { return authFailures }
 
 func APIKey(expected string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
@@ -21,6 +26,7 @@ func APIKey(expected string) func(http.Handler) http.Handler {
 				}
 			}
 			if len(provided) != len(expected) || subtle.ConstantTimeCompare([]byte(provided), []byte(expected)) != 1 {
+				atomic.AddUint64(&authFailures, 1)
 				w.Header().Set("WWW-Authenticate", `Bearer realm="vod2live"`)
 				http.Error(w, "não autorizado", http.StatusUnauthorized)
 				return

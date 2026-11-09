@@ -71,3 +71,7 @@ O CI executa `go test ./...`, constrói os serviços Docker e roda o fluxo end-t
 ## Fase 2 — segurança inicial
 
 Os endpoints `/v1/*` aceitam `X-API-Key` ou `Authorization: Bearer <API_KEY>`. Configure `API_KEY` como secret no ambiente; quando vazio, o middleware permanece aberto apenas para desenvolvimento local. Os endpoints `/healthz` e `/readyz` continuam públicos para probes de infraestrutura.
+
+## Fase 3 — observabilidade inicial
+
+O endpoint público `/metrics` expõe métricas no formato Prometheus: requisições HTTP, erros, falhas de autenticação, solicitações de manifests e estado de readiness. Em produção, restrinja o acesso ao endpoint por rede, ingress ou autenticação do próprio monitoramento.

@@ -19,6 +19,7 @@ import (
 	"github.com/vod2live/cyonlive_vod2live/internal/db"
 	"github.com/vod2live/cyonlive_vod2live/internal/health"
 	"github.com/vod2live/cyonlive_vod2live/internal/manifest"
+	"github.com/vod2live/cyonlive_vod2live/internal/metrics"
 	"github.com/vod2live/cyonlive_vod2live/internal/playout"
 	"github.com/vod2live/cyonlive_vod2live/internal/schedule"
 )
@@ -36,9 +37,12 @@ func main() {
 	schedules := schedule.PostgresRepository{Pool: pool}
 	manifests := manifest.Service{Assets: assets, Schedules: schedules, Cache: manifest.ManifestCache{Client: redisClient}}
 	playoutStore := playout.RedisStore{Client: redisClient}
+	apiMetrics := &metrics.Metrics{}
 	r := chi.NewRouter()
+	r.Use(apiMetrics.Middleware)
 	r.Get("/healthz", health.Handler)
 	r.Get("/readyz", health.ReadyHandler(pool, redisClient))
+	r.Get("/metrics", apiMetrics.Handler)
 	r.Route("/v1", func(v1 chi.Router) {
 		v1.Use(auth.APIKey(cfg.APIKey))
 		v1.Post("/assets", createAsset(assets))
