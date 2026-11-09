@@ -27,6 +27,7 @@ import (
 	"github.com/vod2live/cyonlive_vod2live/internal/observability"
 	"github.com/vod2live/cyonlive_vod2live/internal/playout"
 	"github.com/vod2live/cyonlive_vod2live/internal/ratelimit"
+	"github.com/vod2live/cyonlive_vod2live/internal/retry"
 	"github.com/vod2live/cyonlive_vod2live/internal/schedule"
 	"github.com/vod2live/cyonlive_vod2live/internal/security"
 )
@@ -40,6 +41,9 @@ func main() {
 	}
 	defer pool.Close()
 	redisClient := redis.NewClient(&redis.Options{Addr: cfg.RedisAddr})
+	if err := retry.Run(context.Background(), 8, 500*time.Millisecond, func() error { return redisClient.Ping(context.Background()).Err() }); err != nil {
+		log.Fatalf("redis: %v", err)
+	}
 	assets := asset.PostgresRepository{Pool: pool}
 	channels := channel.PostgresRepository{Pool: pool}
 	schedules := schedule.PostgresRepository{Pool: pool}

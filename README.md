@@ -95,3 +95,7 @@ Cada resposta HTTP recebe `X-Request-ID`. Se o cliente enviar esse header, o mes
 ## Fase 8 — lifecycle seguro
 
 API e worker de playout tratam `SIGTERM` e `SIGINT`. A API deixa de aceitar novas conexões e aguarda até 10 segundos para encerrar requisições em andamento; o worker cancela o loop de playout e libera recursos. O Compose reserva 15 segundos de `stop_grace_period` para o processo concluir o shutdown.
+
+## Fase 9 — resiliência de dependências
+
+PostgreSQL e Redis usam retry com backoff exponencial na inicialização. O processo tenta até oito vezes, aumenta o intervalo entre tentativas até cinco segundos e respeita cancelamento por sinal, evitando falha prematura durante o boot ordenado dos serviços.

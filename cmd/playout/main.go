@@ -14,6 +14,7 @@ import (
 	"github.com/vod2live/cyonlive_vod2live/internal/config"
 	"github.com/vod2live/cyonlive_vod2live/internal/db"
 	"github.com/vod2live/cyonlive_vod2live/internal/playout"
+	"github.com/vod2live/cyonlive_vod2live/internal/retry"
 	"github.com/vod2live/cyonlive_vod2live/internal/schedule"
 )
 
@@ -27,7 +28,7 @@ func main() {
 	}
 	defer pool.Close()
 	redisClient := redis.NewClient(&redis.Options{Addr: cfg.RedisAddr})
-	if err := redisClient.Ping(ctx).Err(); err != nil {
+	if err := retry.Run(ctx, 8, 500*time.Millisecond, func() error { return redisClient.Ping(ctx).Err() }); err != nil {
 		log.Fatal(err)
 	}
 	channels := channel.PostgresRepository{Pool: pool}

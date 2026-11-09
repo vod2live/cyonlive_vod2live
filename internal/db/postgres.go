@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/vod2live/cyonlive_vod2live/internal/retry"
 )
 
 func Open(ctx context.Context, databaseURL string) (*pgxpool.Pool, error) {
@@ -19,7 +20,7 @@ func Open(ctx context.Context, databaseURL string) (*pgxpool.Pool, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := pool.Ping(ctx); err != nil {
+	if err := retry.Run(ctx, 8, 500*time.Millisecond, func() error { return pool.Ping(ctx) }); err != nil {
 		pool.Close()
 		return nil, err
 	}
