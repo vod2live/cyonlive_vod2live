@@ -88,6 +88,60 @@ paths:
       summary: Manifesto master HLS do canal
       parameters: [{ $ref: '#/components/parameters/Id' }]
       responses: { '200': { description: Master HLS, content: { application/vnd.apple.mpegurl: {} } } }
+  /v1/channels/{id}/playback:
+    post:
+      summary: Emitir URL temporária de playback para um canal
+      description: Endpoint administrativo protegido por API key. O link emitido é assinado por HMAC e expira conforme PLAYBACK_TOKEN_TTL_SECONDS.
+      security: [{ ApiKeyAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/Id' }]
+      responses:
+        '201':
+          description: Link temporário de playback
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [channel_id, playback_url, expires_at]
+                properties:
+                  channel_id: { type: string, format: uuid }
+                  playback_url: { type: string }
+                  expires_at: { type: string, format: date-time }
+        '404': { description: Canal não encontrado }
+  /playback/{channelID}/master.m3u8:
+    get:
+      summary: Manifesto master HLS público com assinatura
+      parameters:
+        - { name: channelID, in: path, required: true, schema: { type: string, format: uuid } }
+        - { $ref: '#/components/parameters/PlaybackExpires' }
+        - { $ref: '#/components/parameters/PlaybackToken' }
+      responses:
+        '200': { description: Manifesto master com variantes assinadas, content: { application/vnd.apple.mpegurl: {} } }
+        '403': { description: Token ausente ou inválido }
+        '410': { description: Token expirado }
+  /playback/{channelID}/media/{variant}.m3u8:
+    get:
+      summary: Manifesto de mídia HLS assinado
+      parameters:
+        - { name: channelID, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: variant, in: path, required: true, schema: { type: string } }
+        - { $ref: '#/components/parameters/PlaybackExpires' }
+        - { $ref: '#/components/parameters/PlaybackToken' }
+      responses:
+        '200': { description: Manifesto com segmentos protegidos, content: { application/vnd.apple.mpegurl: {} } }
+        '403': { description: Token ausente ou inválido }
+        '410': { description: Token expirado }
+  /playback/{channelID}/segment:
+    get:
+      summary: Proxy de segmento HLS com assinatura vinculada ao canal e à origem
+      parameters:
+        - { name: channelID, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: u, in: query, required: true, schema: { type: string, format: byte } }
+        - { $ref: '#/components/parameters/PlaybackExpires' }
+        - { $ref: '#/components/parameters/PlaybackToken' }
+      responses:
+        '200': { description: Conteúdo do segmento HLS }
+        '403': { description: Token ausente ou inválido }
+        '410': { description: Token expirado }
 components:
   securitySchemes:
     ApiKeyAuth:
@@ -100,6 +154,16 @@ components:
       in: path
       required: true
       schema: { type: string, format: uuid }
+    PlaybackExpires:
+      name: expires
+      in: query
+      required: true
+      schema: { type: integer, format: int64, description: Expiração Unix em segundos }
+    PlaybackToken:
+      name: token
+      in: query
+      required: true
+      schema: { type: string, description: Assinatura HMAC-SHA256 codificada em base64url }
   schemas:
     AssetInput:
       type: object

@@ -21,12 +21,18 @@ func (c Config) Validate() error {
 	if c.RateLimitPerMinute <= 0 {
 		return fmt.Errorf("RATE_LIMIT_PER_MINUTE deve ser positivo")
 	}
+	if c.PlaybackTokenTTLSeconds <= 0 {
+		return fmt.Errorf("PLAYBACK_TOKEN_TTL_SECONDS deve ser positivo")
+	}
 	if c.Environment == "production" {
 		if c.APIKey == "" {
 			return fmt.Errorf("API_KEY é obrigatório em production")
 		}
 		if c.AllowPrivateHLS {
 			return fmt.Errorf("ALLOW_PRIVATE_HLS deve ser false em production")
+		}
+		if len(c.PlaybackTokenSecret) < 32 || c.PlaybackTokenSecret == "development-only-playback-secret-change-me" {
+			return fmt.Errorf("PLAYBACK_TOKEN_SECRET precisa ser um segredo único com pelo menos 32 bytes em production")
 		}
 	}
 	return nil

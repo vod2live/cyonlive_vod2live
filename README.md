@@ -111,3 +111,20 @@ O teste `tests/integration/contract.sh` valida o contrato operacional mínimo: r
 ## Fase 12 — diagnóstico e versão
 
 O endpoint público `GET /version` retorna versão, commit e horário de build. O Dockerfile aceita os argumentos `VERSION`, `COMMIT` e `BUILD_TIME`, permitindo que o CI injete a identidade exata do artefato publicado.
+
+## Fase 13 — autenticação de playback HLS
+
+O endpoint administrativo `POST /v1/channels/{id}/playback` emite, mediante `X-API-Key`, uma URL temporária específica para o canal. A resposta inclui `playback_url` relativo e `expires_at`; o player acessa o link sem receber nem expor a API key. O master, as variantes e cada segmento usam assinaturas HMAC-SHA256 vinculadas ao canal e ao recurso. Tokens ausentes ou inválidos recebem `403`; tokens expirados recebem `410 Gone`.
+
+O master e as media playlists são servidos publicamente em `/playback/{channelID}/master.m3u8` e `/playback/{channelID}/media/{variant}.m3u8`. As URLs dos segmentos são reescritas para `/playback/{channelID}/segment`, que valida a assinatura e faz proxy da origem HLS; as respostas de playback usam `Cache-Control: private, no-store` e `Referrer-Policy: no-referrer`. O proxy restringe URLs a HTTP(S), bloqueia endereços privados quando `ALLOW_PRIVATE_HLS=false` e não segue redirecionamentos.
+
+Configure `PLAYBACK_TOKEN_SECRET` como segredo aleatório com pelo menos 32 bytes e `PLAYBACK_TOKEN_TTL_SECONDS` (padrão: 600). O Compose define um segredo fixo apenas para desenvolvimento local. Em `APP_ENV=production`, a inicialização falha se o segredo de desenvolvimento for usado, se o segredo tiver menos de 32 bytes ou se `ALLOW_PRIVATE_HLS` estiver habilitado. Compartilhe as URLs emitidas como credenciais temporárias e nunca as registre em logs ou referers.
+
+Exemplo de emissão:
+
+```sh
+curl -X POST -H 'X-API-Key: <API_KEY>' \
+  http://localhost:8080/v1/channels/<CHANNEL_ID>/playback
+```
+
+O contrato está descrito em [`openapi.yaml`](./openapi.yaml) e os testes de assinatura, expiração, escopo por canal/recurso, reescrita de manifest e proxy de segmentos estão em `internal/playback`.

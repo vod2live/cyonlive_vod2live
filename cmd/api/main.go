@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"log/slog"
 	"net/http"
@@ -26,6 +27,7 @@ import (
 	"github.com/vod2live/cyonlive_vod2live/internal/manifest"
 	"github.com/vod2live/cyonlive_vod2live/internal/metrics"
 	"github.com/vod2live/cyonlive_vod2live/internal/observability"
+	"github.com/vod2live/cyonlive_vod2live/internal/playback"
 	"github.com/vod2live/cyonlive_vod2live/internal/playout"
 	"github.com/vod2live/cyonlive_vod2live/internal/ratelimit"
 	"github.com/vod2live/cyonlive_vod2live/internal/retry"
@@ -52,6 +54,11 @@ func main() {
 	channels := channel.PostgresRepository{Pool: pool}
 	schedules := schedule.PostgresRepository{Pool: pool}
 	manifests := manifest.Service{Assets: assets, Schedules: schedules, Cache: manifest.ManifestCache{Client: redisClient}}
+	playbackSigner, err := playback.NewSigner(cfg.PlaybackTokenSecret, time.Duration(cfg.PlaybackTokenTTLSeconds)*time.Second)
+	if err != nil {
+		log.Fatalf("playback configuration: %v", err)
+	}
+	playbackHandler := playback.Handler{Signer: playbackSigner, Manifests: manifests, AllowPrivate: cfg.AllowPrivateHLS}
 	playoutStore := playout.RedisStore{Client: redisClient}
 	apiMetrics := &metrics.Metrics{}
 	limiter := ratelimit.New(cfg.RateLimitPerMinute)
@@ -63,6 +70,32 @@ func main() {
 	r.Get("/readyz", health.ReadyHandler(pool, redisClient))
 	r.Get("/metrics", apiMetrics.Handler)
 	r.Get("/version", buildinfo.Handler)
+	r.Route("/playback/{channelID}", func(play chi.Router) {
+		play.Get("/master.m3u8", func(w http.ResponseWriter, r *http.Request) {
+			id, err := uuid.Parse(chi.URLParam(r, "channelID"))
+			if err != nil {
+				http.Error(w, "id inválido", http.StatusBadRequest)
+				return
+			}
+			playbackHandler.ServeMaster(w, r, id)
+		})
+		play.Get("/media/{variant}.m3u8", func(w http.ResponseWriter, r *http.Request) {
+			id, err := uuid.Parse(chi.URLParam(r, "channelID"))
+			if err != nil {
+				http.Error(w, "id inválido", http.StatusBadRequest)
+				return
+			}
+			playbackHandler.ServeMedia(w, r, id, chi.URLParam(r, "variant"))
+		})
+		play.Get("/segment", func(w http.ResponseWriter, r *http.Request) {
+			id, err := uuid.Parse(chi.URLParam(r, "channelID"))
+			if err != nil {
+				http.Error(w, "id inválido", http.StatusBadRequest)
+				return
+			}
+			playbackHandler.ServeSegment(w, r, id)
+		})
+	})
 	r.Route("/v1", func(v1 chi.Router) {
 		v1.Use(limiter.Middleware)
 		v1.Use(auth.APIKey(cfg.APIKey))
@@ -77,6 +110,7 @@ func main() {
 		v1.Get("/channels/{id}/status", channelStatus(channels, playoutStore))
 		v1.Get("/channels/{id}/master.m3u8", masterManifest(manifests))
 		v1.Get("/channels/{id}/media/{variant}.m3u8", mediaManifest(manifests))
+		v1.Post("/channels/{id}/playback", issuePlaybackLink(channels, playbackSigner))
 		v1.Post("/channels/{id}/schedule", createScheduleItem(channels, assets, schedules))
 		v1.Get("/channels/{id}/schedule", listSchedule(schedules))
 		v1.Patch("/schedule/{id}", updateScheduleItem(schedules))
@@ -396,4 +430,26 @@ func writeJSON(w http.ResponseWriter, status int, value any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(value)
+}
+
+func issuePlaybackLink(repo channel.PostgresRepository, signer *playback.Signer) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, err := uuid.Parse(chi.URLParam(r, "id"))
+		if err != nil {
+			http.Error(w, "id inválido", http.StatusBadRequest)
+			return
+		}
+		if _, err = repo.FindByID(r.Context(), id); err != nil {
+			http.Error(w, "canal não encontrado", http.StatusNotFound)
+			return
+		}
+		now := time.Now().UTC()
+		expires, token := signer.NewToken(id, "master", now)
+		url := fmt.Sprintf("/playback/%s/master.m3u8?expires=%d&token=%s", id, expires, token)
+		writeJSON(w, http.StatusCreated, map[string]any{
+			"channel_id":   id,
+			"playback_url": url,
+			"expires_at":   time.Unix(expires, 0).UTC(),
+		})
+	}
 }
