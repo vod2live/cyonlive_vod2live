@@ -16,6 +16,7 @@ services:
       DATABASE_URL: postgres://vod2live:vod2live@postgres:5432/vod2live?sslmode=disable
       REDIS_ADDR: redis:6379
       API_KEY: ${API_KEY:-phase2-local-key}
+      ALLOW_PRIVATE_HLS: ${ALLOW_PRIVATE_HLS:-true}
     ports:
       - "8080:8080"
     depends_on:

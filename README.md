@@ -75,3 +75,7 @@ Os endpoints `/v1/*` aceitam `X-API-Key` ou `Authorization: Bearer <API_KEY>`. C
 ## Fase 3 — observabilidade inicial
 
 O endpoint público `/metrics` expõe métricas no formato Prometheus: requisições HTTP, erros, falhas de autenticação, solicitações de manifests e estado de readiness. Em produção, restrinja o acesso ao endpoint por rede, ingress ou autenticação do próprio monitoramento.
+
+## Fase 4 — hardening de origens HLS
+
+O validador HLS bloqueia por padrão origens `localhost`, loopback, IPs privados, link-local, multicast e não especificados, reduzindo risco de SSRF. Para testes locais com o serviço `hls-fixture`, o Compose define `ALLOW_PRIVATE_HLS=true`; em produção, mantenha essa variável como `false`.

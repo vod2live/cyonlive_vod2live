@@ -19,11 +19,17 @@ func TestInspectorReadsMasterDurationFromMediaVariant(t *testing.T) {
 		}
 	}))
 	defer server.Close()
-	got, err := (HLSInspector{}).Inspect(server.URL + "/master.m3u8")
+	got, err := (HLSInspector{AllowPrivate: true}).Inspect(server.URL + "/master.m3u8")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !got.IsMaster || got.Variants != 1 || got.Segments != 2 || got.DurationMS != 10000 {
 		t.Fatalf("unexpected inspection: %+v", got)
+	}
+}
+
+func TestInspectorBlocksPrivateOriginByDefault(t *testing.T) {
+	if _, err := (HLSInspector{}).Inspect("http://127.0.0.1/master.m3u8"); err == nil {
+		t.Fatal("expected private origin to be blocked")
 	}
 }

@@ -2,6 +2,7 @@ package asset
 
 import (
 	"bufio"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -14,7 +15,10 @@ import (
 	"github.com/vod2live/cyonlive_vod2live/pkg/hls"
 )
 
-type HLSInspector struct{ Client *http.Client }
+type HLSInspector struct {
+	Client       *http.Client
+	AllowPrivate bool
+}
 
 type Inspection struct {
 	URL            string  `json:"url"`
@@ -32,16 +36,19 @@ func (i HLSInspector) Inspect(rawURL string) (Inspection, error) {
 	if client == nil {
 		client = &http.Client{Timeout: 15 * time.Second}
 	}
-	return inspectManifest(client, rawURL, 0)
+	return inspectManifest(client, rawURL, 0, i.AllowPrivate)
 }
 
-func inspectManifest(client *http.Client, rawURL string, depth int) (Inspection, error) {
+func inspectManifest(client *http.Client, rawURL string, depth int, allowPrivate bool) (Inspection, error) {
 	if depth > 2 {
 		return Inspection{}, errors.New("HLS manifest nesting exceeds supported depth")
 	}
 	u, err := url.Parse(rawURL)
 	if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" || !strings.HasSuffix(strings.ToLower(u.Path), ".m3u8") {
 		return Inspection{}, errors.New("hls_url deve ser uma URL http(s) apontando para um manifesto .m3u8")
+	}
+	if err := validateOrigin(context.Background(), rawURL, allowPrivate); err != nil {
+		return Inspection{}, err
 	}
 	resp, err := client.Get(rawURL)
 	if err != nil {
@@ -71,7 +78,7 @@ func inspectManifest(client *http.Client, rawURL string, depth int) (Inspection,
 			return Inspection{}, errors.New("master playlist sem variantes")
 		}
 		for _, variant := range master.Variants {
-			child, childErr := inspectManifest(client, hls.Resolve(rawURL, variant.URI), depth+1)
+			child, childErr := inspectManifest(client, hls.Resolve(rawURL, variant.URI), depth+1, allowPrivate)
 			if childErr != nil {
 				return Inspection{}, fmt.Errorf("variante HLS inválida: %w", childErr)
 			}

@@ -112,7 +112,7 @@ func validateAsset(repo asset.PostgresRepository) http.HandlerFunc {
 			http.Error(w, "asset não encontrado", 404)
 			return
 		}
-		inspection, err := (asset.HLSInspector{}).Inspect(item.HLSURL)
+		inspection, err := (asset.HLSInspector{AllowPrivate: config.Load().AllowPrivateHLS}).Inspect(item.HLSURL)
 		if err != nil {
 			_ = repo.UpdateStatus(r.Context(), id, asset.StatusInvalid, 0, map[string]string{"error": err.Error()})
 			http.Error(w, err.Error(), 422)
