@@ -6,6 +6,7 @@ import (
 )
 
 type Config struct {
+	Environment           string
 	HTTPAddr              string
 	DatabaseURL           string
 	RedisAddr             string
@@ -18,6 +19,7 @@ type Config struct {
 
 func Load() Config {
 	return Config{
+		Environment:           env("APP_ENV", "development"),
 		HTTPAddr:              env("HTTP_ADDR", ":8080"),
 		DatabaseURL:           env("DATABASE_URL", "postgres://vod2live:vod2live@localhost:5432/vod2live?sslmode=disable"),
 		RedisAddr:             env("REDIS_ADDR", "localhost:6379"),
