@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/vod2live/cyonlive_vod2live/internal/auth"
+	"github.com/vod2live/cyonlive_vod2live/internal/buildinfo"
 )
 
 type Metrics struct {
@@ -40,6 +41,7 @@ func (m *Metrics) Handler(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "vod2live_manifest_requests_total %d\n", m.ManifestRequests.Load())
 	fmt.Fprintf(w, "vod2live_ready 1\n")
 	fmt.Fprintln(w, "vod2live_last_status_code "+strconv.Itoa(http.StatusOK))
+	fmt.Fprintf(w, "vod2live_build_info{version=%q,commit=%q} 1\n", buildinfo.Version, buildinfo.Commit)
 }
 
 type statusWriter struct {

@@ -12,6 +12,9 @@ services:
       dockerfile: deployments/docker/Dockerfile
       args:
         SERVICE: api
+        VERSION: ${VERSION:-dev}
+        COMMIT: ${COMMIT:-unknown}
+        BUILD_TIME: ${BUILD_TIME:-unknown}
     environment:
       HTTP_ADDR: :8080
       APP_ENV: ${APP_ENV:-development}
@@ -44,6 +47,9 @@ services:
       dockerfile: deployments/docker/Dockerfile
       args:
         SERVICE: playout
+        VERSION: ${VERSION:-dev}
+        COMMIT: ${COMMIT:-unknown}
+        BUILD_TIME: ${BUILD_TIME:-unknown}
     environment:
       DATABASE_URL: postgres://vod2live:vod2live@postgres:5432/vod2live?sslmode=disable
       REDIS_ADDR: redis:6379

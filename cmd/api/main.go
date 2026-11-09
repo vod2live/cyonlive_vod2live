@@ -18,6 +18,7 @@ import (
 	"github.com/redis/go-redis/v9"
 	"github.com/vod2live/cyonlive_vod2live/internal/asset"
 	"github.com/vod2live/cyonlive_vod2live/internal/auth"
+	"github.com/vod2live/cyonlive_vod2live/internal/buildinfo"
 	"github.com/vod2live/cyonlive_vod2live/internal/channel"
 	"github.com/vod2live/cyonlive_vod2live/internal/config"
 	"github.com/vod2live/cyonlive_vod2live/internal/db"
@@ -61,6 +62,7 @@ func main() {
 	r.Get("/healthz", health.Handler)
 	r.Get("/readyz", health.ReadyHandler(pool, redisClient))
 	r.Get("/metrics", apiMetrics.Handler)
+	r.Get("/version", buildinfo.Handler)
 	r.Route("/v1", func(v1 chi.Router) {
 		v1.Use(limiter.Middleware)
 		v1.Use(auth.APIKey(cfg.APIKey))

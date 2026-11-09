@@ -107,3 +107,7 @@ O teste `tests/integration/contract.sh` valida o contrato operacional mínimo: r
 ## Fase 11 — configuração segura por ambiente
 
 `APP_ENV=production` ativa validações fail-fast: `API_KEY` torna-se obrigatório, `ALLOW_PRIVATE_HLS` precisa estar desativado e os limites de ingestão, timeout e rate limit devem ser positivos. A aplicação encerra antes de abrir portas quando a configuração é inválida.
+
+## Fase 12 — diagnóstico e versão
+
+O endpoint público `GET /version` retorna versão, commit e horário de build. O Dockerfile aceita os argumentos `VERSION`, `COMMIT` e `BUILD_TIME`, permitindo que o CI injete a identidade exata do artefato publicado.
