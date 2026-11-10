@@ -5,6 +5,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"net"
@@ -84,6 +85,7 @@ type Handler struct {
 	Signer       *Signer
 	Manifests    ManifestSource
 	AllowPrivate bool
+	CORSOrigin   string
 	Now          func() time.Time
 	Client       *http.Client
 }
@@ -123,7 +125,7 @@ func (h Handler) ServeMaster(w http.ResponseWriter, r *http.Request, channelID u
 			return
 		}
 	}
-	h.writeManifest(w, []byte(strings.Join(lines, "\n")))
+	h.writeManifest(w, r, []byte(strings.Join(lines, "\n")))
 }
 
 func (h Handler) ServeMedia(w http.ResponseWriter, r *http.Request, channelID uuid.UUID, variant string) {
@@ -156,7 +158,7 @@ func (h Handler) ServeMedia(w http.ResponseWriter, r *http.Request, channelID uu
 		token := h.Signer.sign(channelID, segmentResource+target, expires)
 		lines[i] = fmt.Sprintf("/playback/%s/segment?u=%s&expires=%d&token=%s", channelID, target, expires, url.QueryEscape(token))
 	}
-	h.writeManifest(w, []byte(strings.Join(lines, "\n")))
+	h.writeManifest(w, r, []byte(strings.Join(lines, "\n")))
 }
 
 func (h Handler) ServeSegment(w http.ResponseWriter, r *http.Request, channelID uuid.UUID) {
@@ -233,7 +235,18 @@ func (h Handler) writeAuthError(w http.ResponseWriter, err error) {
 	http.Error(w, "playback não autorizado", http.StatusForbidden)
 }
 
-func (h Handler) writeManifest(w http.ResponseWriter, body []byte) {
+func (h Handler) writeManifest(w http.ResponseWriter, r *http.Request, body []byte) {
+	if h.CORSOrigin != "" && (h.CORSOrigin == "*" || h.CORSOrigin == r.Header.Get("Origin")) {
+		w.Header().Set("Access-Control-Allow-Origin", h.CORSOrigin)
+		w.Header().Set("Vary", "Origin")
+	}
+	sum := sha256.Sum256(body)
+	etag := `"` + hex.EncodeToString(sum[:]) + `"`
+	w.Header().Set("ETag", etag)
+	if r.Header.Get("If-None-Match") == etag {
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
 	w.Header().Set("Cache-Control", "private, no-store")
 	w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
 	w.Header().Set("Referrer-Policy", "no-referrer")

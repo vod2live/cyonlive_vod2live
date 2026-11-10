@@ -19,6 +19,7 @@ type Config struct {
 	HLSMaxManifestBytes     int64
 	HLSRequestTimeoutSecs   int
 	RateLimitPerMinute      int
+	CORSAllowedOrigin       string
 }
 
 func Load() Config {
@@ -37,6 +38,7 @@ func Load() Config {
 		HLSMaxManifestBytes:     int64Env("HLS_MAX_MANIFEST_BYTES", 8<<20),
 		HLSRequestTimeoutSecs:   intEnv("HLS_REQUEST_TIMEOUT_SECONDS", 15),
 		RateLimitPerMinute:      intEnv("RATE_LIMIT_PER_MINUTE", 120),
+		CORSAllowedOrigin:       env("CORS_ALLOWED_ORIGIN", ""),
 	}
 }
 

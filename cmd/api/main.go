@@ -59,7 +59,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("playback configuration: %v", err)
 	}
-	playbackHandler := playback.Handler{Signer: playbackSigner, Manifests: manifests, AllowPrivate: cfg.AllowPrivateHLS}
+	playbackHandler := playback.Handler{Signer: playbackSigner, Manifests: manifests, AllowPrivate: cfg.AllowPrivateHLS, CORSOrigin: cfg.CORSAllowedOrigin}
 	sessionTokens, err := auth.NewTokenService(cfg.AuthTokenSecret, time.Duration(cfg.AuthTokenTTLSeconds)*time.Second)
 	if err != nil {
 		log.Fatalf("auth configuration: %v", err)

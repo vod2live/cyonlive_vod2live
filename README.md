@@ -142,3 +142,7 @@ As consultas HTTP de assets, canais e grade usam o tenant do token. As equipes e
 ## Fase 15 — observabilidade avançada
 
 Além dos contadores básicos, `/metrics` expõe contagem de requisições por status HTTP e histograma de latência com buckets fixos. Não são usados labels livres de rota, tenant ou usuário, evitando cardinalidade explosiva no Prometheus.
+
+## Fase 16 — entrega CDN-friendly
+
+Manifests de playback agora enviam `ETag` SHA-256 e respondem `304 Not Modified` quando o cliente reapresenta a mesma versão. A origem CORS é configurável por `CORS_ALLOWED_ORIGIN`; o Compose usa `*` apenas para desenvolvimento. Em produção, informe a origem exata do player e mantenha o cache privado dos manifests assinados.
