@@ -19,11 +19,12 @@ type Worker struct {
 }
 
 func (w Worker) Tick(ctx context.Context, channelID uuid.UUID) error {
-	locked, err := w.Store.AcquireLock(ctx, channelID, w.Owner, 15*time.Second)
+	leaseTTL := 15 * time.Second
+	token, locked, err := w.Store.AcquireLease(ctx, channelID, w.Owner, leaseTTL)
 	if err != nil || !locked {
 		return err
 	}
-	defer w.Store.ReleaseLock(ctx, channelID, w.Owner)
+	defer w.Store.ReleaseLease(ctx, channelID, w.Owner, token)
 	items, err := w.Schedules.List(ctx, channelID)
 	if err != nil {
 		return err
@@ -50,7 +51,13 @@ func (w Worker) Tick(ctx context.Context, channelID uuid.UUID) error {
 		}
 	}
 	if current == nil {
-		return w.Store.Put(ctx, State{ChannelID: channelID, Status: "idle", UpdatedAt: now}, 30*time.Second)
+		if renewed, renewErr := w.Store.RenewLease(ctx, channelID, w.Owner, token, leaseTTL); renewErr != nil {
+			return renewErr
+		} else if !renewed {
+			return fmt.Errorf("playout lease lost")
+		}
+		_, putErr := w.Store.PutFenced(ctx, State{ChannelID: channelID, Status: "idle", FencingToken: token, UpdatedAt: now}, w.Owner, 30*time.Second)
+		return putErr
 	}
 	assetItem, err := w.Assets.FindByID(ctx, current.AssetID)
 	if err != nil {
@@ -60,8 +67,14 @@ func (w Worker) Tick(ctx context.Context, channelID uuid.UUID) error {
 	if position < 0 {
 		position = 0
 	}
-	state := State{ChannelID: channelID, ScheduleItemID: current.ID, AssetID: assetItem.ID, Status: "running", PositionMS: position, UpdatedAt: now}
-	return w.Store.Put(ctx, state, 30*time.Second)
+	state := State{ChannelID: channelID, ScheduleItemID: current.ID, AssetID: assetItem.ID, Status: "running", PositionMS: position, FencingToken: token, UpdatedAt: now}
+	if renewed, renewErr := w.Store.RenewLease(ctx, channelID, w.Owner, token, leaseTTL); renewErr != nil {
+		return renewErr
+	} else if !renewed {
+		return fmt.Errorf("playout lease lost")
+	}
+	_, err = w.Store.PutFenced(ctx, state, w.Owner, 30*time.Second)
+	return err
 }
 
 func (w Worker) Run(ctx context.Context, channels func(context.Context) ([]uuid.UUID, error)) error {

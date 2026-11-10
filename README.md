@@ -146,3 +146,7 @@ Além dos contadores básicos, `/metrics` expõe contagem de requisições por s
 ## Fase 16 — entrega CDN-friendly
 
 Manifests de playback agora enviam `ETag` SHA-256 e respondem `304 Not Modified` quando o cliente reapresenta a mesma versão. A origem CORS é configurável por `CORS_ALLOWED_ORIGIN`; o Compose usa `*` apenas para desenvolvimento. Em produção, informe a origem exata do player e mantenha o cache privado dos manifests assinados.
+
+## Fase 17 — alta disponibilidade do playout
+
+Cada ciclo de playout usa lease Redis com TTL, renovação antes da publicação e fencing token monotônico por canal. A escrita do estado é atômica e só ocorre se o worker ainda possuir o lease correspondente, impedindo que um processo antigo publique estado depois de perder a liderança.

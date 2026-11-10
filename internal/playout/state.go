@@ -9,6 +9,7 @@ type State struct {
 	ChannelID, ScheduleItemID, AssetID uuid.UUID
 	Status                             string
 	PositionMS, MediaSequence          int64
+	FencingToken                       uint64
 	UpdatedAt                          time.Time
 }
 
