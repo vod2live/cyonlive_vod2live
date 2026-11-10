@@ -54,7 +54,7 @@ func main() {
 	assets := asset.PostgresRepository{Pool: pool}
 	channels := channel.PostgresRepository{Pool: pool}
 	schedules := schedule.PostgresRepository{Pool: pool}
-	manifests := manifest.Service{Assets: assets, Schedules: schedules, Cache: manifest.ManifestCache{Client: redisClient}}
+	manifests := manifest.Service{Channels: channels, Assets: assets, Schedules: schedules, Cache: manifest.ManifestCache{Client: redisClient}}
 	playbackSigner, err := playback.NewSigner(cfg.PlaybackTokenSecret, time.Duration(cfg.PlaybackTokenTTLSeconds)*time.Second)
 	if err != nil {
 		log.Fatalf("playback configuration: %v", err)

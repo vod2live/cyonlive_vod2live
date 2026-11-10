@@ -12,11 +12,13 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/vod2live/cyonlive_vod2live/internal/asset"
+	"github.com/vod2live/cyonlive_vod2live/internal/channel"
 	"github.com/vod2live/cyonlive_vod2live/internal/schedule"
 	"github.com/vod2live/cyonlive_vod2live/pkg/hls"
 )
 
 type Service struct {
+	Channels  channel.PostgresRepository
 	Assets    asset.PostgresRepository
 	Schedules schedule.PostgresRepository
 	Client    *http.Client
@@ -80,6 +82,28 @@ func (s Service) Media(ctx context.Context, channelID uuid.UUID, variant string,
 		return nil, err
 	}
 	sort.Slice(items, func(i, j int) bool { return items[i].StartsAt.Before(items[j].StartsAt) })
+	if len(items) > 0 {
+		channelItem, channelErr := s.Channels.FindByID(ctx, channelID)
+		if channelErr == nil && channelItem.LoopEnabled {
+			cycleStart := items[0].StartsAt
+			cycleEnd := cycleStart
+			for _, item := range items {
+				end := item.EndsAt
+				if end == nil {
+					if assetItem, assetErr := s.Assets.FindByID(ctx, item.AssetID); assetErr == nil && assetItem.DurationMS > 0 {
+						derived := item.StartsAt.Add(time.Duration(assetItem.DurationMS) * time.Millisecond)
+						end = &derived
+					}
+				}
+				if end != nil && end.After(cycleEnd) {
+					cycleEnd = *end
+				}
+			}
+			if cycleEnd.After(cycleStart) && now.After(cycleEnd) {
+				now = cycleStart.Add(now.Sub(cycleStart) % cycleEnd.Sub(cycleStart))
+			}
+		}
+	}
 	current := sort.Search(len(items), func(i int) bool { return items[i].StartsAt.After(now) }) - 1
 	if current < 0 {
 		current = 0

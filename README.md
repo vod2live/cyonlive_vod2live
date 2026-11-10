@@ -150,3 +150,7 @@ Manifests de playback agora enviam `ETag` SHA-256 e respondem `304 Not Modified`
 ## Fase 17 — alta disponibilidade do playout
 
 Cada ciclo de playout usa lease Redis com TTL, renovação antes da publicação e fencing token monotônico por canal. A escrita do estado é atômica e só ocorre se o worker ainda possuir o lease correspondente, impedindo que um processo antigo publique estado depois de perder a liderança.
+
+## Fase 18 — continuidade de programação
+
+Quando `loop_enabled=true`, o Manifest Builder calcula a duração real da grade a partir dos `ends_at` ou das durações dos assets e reposiciona o relógio no início do ciclo após o último item. Isso evita que um canal linear fique sem segmentos ao final da programação. A próxima extensão da fase é adicionar eventos comerciais e SCTE-35 sobre essa base.
