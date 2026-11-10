@@ -27,6 +27,7 @@ type MediaPlaylist struct {
 	TargetDuration int
 	MediaSequence  uint64
 	Segments       []Segment
+	DateRanges     []string
 	EndList        bool
 }
 

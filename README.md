@@ -154,3 +154,7 @@ Cada ciclo de playout usa lease Redis com TTL, renovação antes da publicação
 ## Fase 18 — continuidade de programação
 
 Quando `loop_enabled=true`, o Manifest Builder calcula a duração real da grade a partir dos `ends_at` ou das durações dos assets e reposiciona o relógio no início do ciclo após o último item. Isso evita que um canal linear fique sem segmentos ao final da programação. A próxima extensão da fase é adicionar eventos comerciais e SCTE-35 sobre essa base.
+
+## Fase 19 — metadados HLS de eventos
+
+O parser e o serializador preservam tags `#EXT-X-DATERANGE` nas media playlists, mantendo marcadores de eventos durante o processamento. Essa base permite adicionar cues comerciais e SCTE-35 sem descartar metadados HLS existentes.
