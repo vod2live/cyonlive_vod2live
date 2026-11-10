@@ -17,4 +17,10 @@ func TestMetricsMiddlewareAndHandler(t *testing.T) {
 	if !strings.Contains(rr.Body.String(), "vod2live_http_requests_total 1") {
 		t.Fatalf("unexpected metrics: %s", rr.Body.String())
 	}
+	if !strings.Contains(rr.Body.String(), `vod2live_http_requests_by_status_total{status="204"} 1`) {
+		t.Fatalf("missing status metric: %s", rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "vod2live_http_request_duration_seconds_count 1") {
+		t.Fatalf("missing latency metric: %s", rr.Body.String())
+	}
 }
