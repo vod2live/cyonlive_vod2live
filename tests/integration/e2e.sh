@@ -29,6 +29,11 @@ master=$(curl --fail --silent "$BASE_URL/v1/channels/$channel_id/master.m3u8" -H
 printf '%s' "$master" | grep -q '#EXTM3U'
 media=$(curl --fail --silent "$BASE_URL/v1/channels/$channel_id/media/360p.m3u8" -H "$AUTH_HEADER")
 printf '%s' "$media" | grep -q '#EXT-X-MEDIA-SEQUENCE'
+playback=$(curl --fail --silent -X POST "$BASE_URL/v1/channels/$channel_id/playback" -H "$AUTH_HEADER")
+playback_url=$(printf '%s' "$playback" | json_value playback_url)
+playback_master=$(curl --fail --silent "$BASE_URL$playback_url")
+printf '%s' "$playback_master" | grep -q '#EXTM3U'
+if [ "$(curl --silent --output /dev/null --write-out '%{http_code}' "$BASE_URL/playback/$channel_id/master.m3u8")" != "403" ]; then echo 'playback sem token deveria retornar 403' >&2; exit 1; fi
 curl --fail --silent -X PATCH "$BASE_URL/v1/schedule/$item_id" -H "$AUTH_HEADER" -H 'Content-Type: application/json' -d "{\"starts_at\":\"$start\",\"position\":2,\"enabled\":true}" | grep -q '"position":2'
 curl --fail --silent -X DELETE "$BASE_URL/v1/schedule/$item_id" -H "$AUTH_HEADER" >/dev/null
 
