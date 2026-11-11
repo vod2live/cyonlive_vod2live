@@ -162,3 +162,7 @@ O parser e o serializador preservam tags `#EXT-X-DATERANGE` nas media playlists,
 ## Fase 20 — operação de banco e recuperação
 
 O projeto fornece backup PostgreSQL em formato customizado, verificação do catálogo do dump e restore explícito protegido por confirmação. Com a stack ativa, use `make db-backup`, valide com `make db-verify-backup BACKUP_FILE=backups/arquivo.dump` e só execute `make db-restore BACKUP_FILE=...` após confirmar que a operação destrutiva é desejada. O CI também gera e valida um dump temporário em cada execução integrada.
+
+## Fase 21 — teste de carga operacional
+
+O script `scripts/load-test.sh` executa requisições concorrentes contra `/healthz`, `/readyz` e `/version`, com `REQUESTS` e `CONCURRENCY` configuráveis. O CI roda 120 requisições com concorrência 8 e falha quando qualquer endpoint retorna status diferente de 200. Execute localmente com `REQUESTS=500 CONCURRENCY=16 make load-test`.
