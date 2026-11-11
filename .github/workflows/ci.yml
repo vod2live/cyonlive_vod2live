@@ -20,6 +20,7 @@ jobs:
       - run: ./tests/integration/e2e.sh
       - run: ./tests/integration/contract.sh
       - run: REQUESTS=120 CONCURRENCY=8 ./scripts/load-test.sh
+      - run: ./scripts/verify-migrations.sh
       - run: mkdir -p /tmp/vod2live-ci && docker compose exec -T postgres pg_dump -Fc -U vod2live -d vod2live > /tmp/vod2live-ci/database.dump
       - run: test -s /tmp/vod2live-ci/database.dump && docker compose run --rm -T --no-deps postgres pg_restore --list < /tmp/vod2live-ci/database.dump
       - if: always()

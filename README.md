@@ -166,3 +166,7 @@ O projeto fornece backup PostgreSQL em formato customizado, verificação do cat
 ## Fase 21 — teste de carga operacional
 
 O script `scripts/load-test.sh` executa requisições concorrentes contra `/healthz`, `/readyz` e `/version`, com `REQUESTS` e `CONCURRENCY` configuráveis. O CI roda 120 requisições com concorrência 8 e falha quando qualquer endpoint retorna status diferente de 200. Execute localmente com `REQUESTS=500 CONCURRENCY=16 make load-test`.
+
+## Fase 22 — migrações reaplicáveis
+
+As constraints da migração multi-tenant usam blocos idempotentes e podem ser reaplicadas sem erro. O script `scripts/verify-migrations.sh` executa novamente todos os SQLs com `ON_ERROR_STOP=1`; o CI e o comando `make verify-migrations` usam esse gate para detectar migrações incompatíveis com upgrades.

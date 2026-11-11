@@ -32,22 +32,22 @@ CREATE TABLE IF NOT EXISTS organization_memberships (
 ALTER TABLE channels ADD COLUMN IF NOT EXISTS organization_id UUID;
 UPDATE channels SET organization_id = (SELECT id FROM organizations WHERE slug = 'legacy') WHERE organization_id IS NULL;
 ALTER TABLE channels ALTER COLUMN organization_id SET NOT NULL;
-ALTER TABLE channels ADD CONSTRAINT channels_organization_fk FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE;
+DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'channels_organization_fk') THEN ALTER TABLE channels ADD CONSTRAINT channels_organization_fk FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE; END IF; END $$;
 ALTER TABLE channels DROP CONSTRAINT IF EXISTS channels_slug_key;
-ALTER TABLE channels ADD CONSTRAINT channels_org_slug_unique UNIQUE (organization_id, slug);
-ALTER TABLE channels ADD CONSTRAINT channels_id_org_unique UNIQUE (id, organization_id);
+DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'channels_org_slug_unique') THEN ALTER TABLE channels ADD CONSTRAINT channels_org_slug_unique UNIQUE (organization_id, slug); END IF; END $$;
+DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'channels_id_org_unique') THEN ALTER TABLE channels ADD CONSTRAINT channels_id_org_unique UNIQUE (id, organization_id); END IF; END $$;
 
 ALTER TABLE assets ADD COLUMN IF NOT EXISTS organization_id UUID;
 UPDATE assets SET organization_id = (SELECT id FROM organizations WHERE slug = 'legacy') WHERE organization_id IS NULL;
 ALTER TABLE assets ALTER COLUMN organization_id SET NOT NULL;
-ALTER TABLE assets ADD CONSTRAINT assets_organization_fk FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE;
-ALTER TABLE assets ADD CONSTRAINT assets_id_org_unique UNIQUE (id, organization_id);
+DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'assets_organization_fk') THEN ALTER TABLE assets ADD CONSTRAINT assets_organization_fk FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE; END IF; END $$;
+DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'assets_id_org_unique') THEN ALTER TABLE assets ADD CONSTRAINT assets_id_org_unique UNIQUE (id, organization_id); END IF; END $$;
 
 ALTER TABLE schedule_items ADD COLUMN IF NOT EXISTS organization_id UUID;
 UPDATE schedule_items s SET organization_id = c.organization_id FROM channels c WHERE s.channel_id = c.id AND s.organization_id IS NULL;
 ALTER TABLE schedule_items ALTER COLUMN organization_id SET NOT NULL;
-ALTER TABLE schedule_items ADD CONSTRAINT schedule_channel_org_fk FOREIGN KEY (channel_id, organization_id) REFERENCES channels(id, organization_id) ON DELETE CASCADE;
-ALTER TABLE schedule_items ADD CONSTRAINT schedule_asset_org_fk FOREIGN KEY (asset_id, organization_id) REFERENCES assets(id, organization_id) ON DELETE CASCADE;
+DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'schedule_channel_org_fk') THEN ALTER TABLE schedule_items ADD CONSTRAINT schedule_channel_org_fk FOREIGN KEY (channel_id, organization_id) REFERENCES channels(id, organization_id) ON DELETE CASCADE; END IF; END $$;
+DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'schedule_asset_org_fk') THEN ALTER TABLE schedule_items ADD CONSTRAINT schedule_asset_org_fk FOREIGN KEY (asset_id, organization_id) REFERENCES assets(id, organization_id) ON DELETE CASCADE; END IF; END $$;
 
 CREATE TABLE IF NOT EXISTS teams (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

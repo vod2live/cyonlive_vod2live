@@ -1,6 +1,6 @@
 APP=vod2live
 
-.PHONY: run test fmt compose-up compose-down e2e contract load-test db-backup db-verify-backup db-restore
+.PHONY: run test fmt compose-up compose-down e2e contract load-test verify-migrations db-backup db-verify-backup db-restore
 
 run:
 	go run ./cmd/api
@@ -25,6 +25,9 @@ contract:
 
 load-test:
 	scripts/load-test.sh
+
+verify-migrations:
+	scripts/verify-migrations.sh
 
 db-backup:
 	scripts/db-backup.sh
