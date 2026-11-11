@@ -158,3 +158,7 @@ Quando `loop_enabled=true`, o Manifest Builder calcula a duração real da grade
 ## Fase 19 — metadados HLS de eventos
 
 O parser e o serializador preservam tags `#EXT-X-DATERANGE` nas media playlists, mantendo marcadores de eventos durante o processamento. Essa base permite adicionar cues comerciais e SCTE-35 sem descartar metadados HLS existentes.
+
+## Fase 20 — operação de banco e recuperação
+
+O projeto fornece backup PostgreSQL em formato customizado, verificação do catálogo do dump e restore explícito protegido por confirmação. Com a stack ativa, use `make db-backup`, valide com `make db-verify-backup BACKUP_FILE=backups/arquivo.dump` e só execute `make db-restore BACKUP_FILE=...` após confirmar que a operação destrutiva é desejada. O CI também gera e valida um dump temporário em cada execução integrada.
