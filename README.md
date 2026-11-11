@@ -1,178 +1,552 @@
 # VOD2Live Backend
 
-Backend modular para montar canais lineares usando somente fontes HLS (`master.m3u8` ou media playlist). O projeto não faz transcodificação: valida manifests, persiste a grade, mantém o estado do playout e publica manifests HLS lineares. Quando a entrada é uma media playlist direta, o canal opera como uma única variante.
+Backend profissional para transformar ativos VOD HLS em canais lineares HLS. O sistema monta a grade, calcula a posição temporal do playout e publica manifests dinâmicos de saída. Não há transcodificação: os conteúdos de entrada precisam ser disponibilizados como playlists HLS (`master.m3u8` ou media playlist) e seus segmentos continuam sendo servidos pela origem/CDN do conteúdo.
 
-## Componentes
+> **Status:** MVP avançado em pré-produção. O núcleo funcional, segurança inicial, multi-tenancy, playout, observabilidade e operação de banco estão implementados. A validação final em ambiente real ainda depende de infraestrutura com Docker, PostgreSQL, Redis, secret manager, CDN e testes de carga representativos.
 
-- `api`: REST para canais, assets e grade.
-- `validator`: leitura e validação de URLs HLS.
-- `scheduler`: resolução da programação publicada.
-- `playout`: relógio e estado por canal.
-- `manifest`: montagem da janela HLS de saída.
-- PostgreSQL: configuração, catálogo e grade.
-- Redis: locks, cache e estado quente.
+## Sumário
 
-O Redis mantém cache curto dos manifests (`master.m3u8` e media playlists), estado quente por canal e locks distribuídos para impedir que dois workers controlem o mesmo playout. O PostgreSQL continua sendo a fonte permanente da configuração e da grade.
+- [Visão geral](#visão-geral)
+- [Arquitetura](#arquitetura)
+- [Fluxo operacional](#fluxo-operacional)
+- [Tecnologias](#tecnologias)
+- [Pré-requisitos](#pré-requisitos)
+- [Execução local](#execução-local)
+- [Configuração](#configuração)
+- [Autenticação e RBAC](#autenticação-e-rbac)
+- [Multi-tenancy](#multi-tenancy)
+- [Ingestão HLS e SSRF](#ingestão-hls-e-ssrf)
+- [Playback assinado](#playback-assinado)
+- [Manifest Builder](#manifest-builder)
+- [Alta disponibilidade](#alta-disponibilidade)
+- [Observabilidade](#observabilidade)
+- [Banco, backup e recuperação](#banco-backup-e-recuperação)
+- [Staging e CDN](#staging-e-cdn)
+- [Testes e CI](#testes-e-ci)
+- [Estrutura do projeto](#estrutura-do-projeto)
+- [API](#api)
+- [Limitações e próximos passos](#limitações-e-próximos-passos)
 
-O worker separado `cmd/playout` consulta canais com status `running`, adquire o lock Redis, calcula a posição atual na programação e atualiza o estado quente do canal a cada 5 segundos.
+## Visão geral
 
-## Executar
+O VOD2Live recebe URLs HLS, valida os manifests, cadastra os ativos, associa esses ativos a canais e persiste uma grade temporal. O worker de playout consulta os canais ativos, adquire liderança distribuída no Redis e mantém o relógio de cada canal. A API monta manifests lineares a partir da posição atual da grade, preservando metadados HLS relevantes e reescrevendo os recursos para playback seguro.
+
+O sistema é adequado para cenários como:
+
+- canais FAST e canais corporativos baseados em VOD;
+- programação linear sem transcodificação;
+- montagem de grades com loop contínuo;
+- distribuição de playback por CDN;
+- operação multi-organização com papéis administrativos;
+- execução horizontal com múltiplos workers de playout.
+
+## Arquitetura
+
+```text
+                    +---------------------+
+                    |  Painel/Operador    |
+                    +----------+----------+
+                               |
+                         Bearer Token
+                               |
+                    +----------v----------+
+                    |       API Go        |
+                    | REST + Playback HLS |
+                    +----+-----------+----+
+                         |           |
+              +----------v--+     +--v----------+
+              | PostgreSQL  |     |    Redis     |
+              | fonte       |     | cache/locks  |
+              | persistente |     | fencing      |
+              +-------------+     +------+-------+
+                                         |
+                                  +------v-------+
+                                  | Playout Go   |
+                                  | workers HA   |
+                                  +------+-------+
+                                         |
+                                  Manifest linear
+                                         |
+                                  +------v-------+
+                                  | CDN / Player |
+                                  +--------------+
+
+Origem HLS dos ativos ------------------------^
+```
+
+### Componentes
+
+- **API (`cmd/api`)**: REST, autenticação, RBAC, canais, ativos, grade, playback e métricas.
+- **Playout (`cmd/playout`)**: worker contínuo que controla o relógio dos canais e publica estado quente.
+- **PostgreSQL 16**: organizações, usuários, equipes, ativos, canais, grade e auditoria.
+- **Redis 7**: cache curto de manifests, leases, locks, fencing tokens e estado quente.
+- **Parser HLS (`pkg/hls`)**: leitura e serialização de master/media playlists.
+- **Manifest service (`internal/manifest`)**: resolução da grade e construção do HLS linear.
+- **Playback (`internal/playback`)**: assinatura HMAC, validação de escopo e proxy de segmentos.
+
+## Fluxo operacional
+
+1. O administrador cria a organização e o primeiro usuário.
+2. Um usuário autorizado cadastra uma URL HLS.
+3. O backend valida master/media playlist, tamanho, timeout, redirects e origem de rede.
+4. Um canal é criado e os ativos são inseridos na grade com horário de início e término.
+5. O canal é iniciado.
+6. Um worker adquire o lease Redis daquele canal e atualiza seu estado.
+7. Um operador solicita uma URL temporária de playback.
+8. O player acessa o master, a media playlist e os segmentos através dos endpoints assinados.
+9. A API monta uma janela linear com segmentos da programação atual e dos próximos itens.
+
+## Tecnologias
+
+| Camada | Tecnologia |
+|---|---|
+| Linguagem | Go 1.22+ |
+| HTTP | `chi` |
+| PostgreSQL | PostgreSQL 16 + `pgx` |
+| Cache e locks | Redis 7 + `go-redis` |
+| HLS | Parser e builder próprios |
+| Autenticação | Bearer tokens, bcrypt e HMAC-SHA256 |
+| Observabilidade | `slog` JSON + métricas Prometheus |
+| Empacotamento | Docker Compose |
+| CI | GitHub Actions |
+
+## Pré-requisitos
+
+Para execução completa, instale:
+
+- Go 1.22 ou superior;
+- Docker Engine e Docker Compose v2;
+- `curl`, `jq` ou o parser simples incluído nos scripts;
+- acesso à rede para buscar origens HLS públicas ou permitidas;
+- PostgreSQL e Redis quando a execução não usar Compose.
+
+## Execução local
+
+Suba toda a stack de desenvolvimento:
 
 ```bash
-docker compose up --build
-curl http://localhost:8080/healthz
-# readiness: PostgreSQL + Redis
-curl http://localhost:8080/readyz
-# smoke test
-./tests/integration/smoke.sh
+docker compose up --build -d
 ```
 
-## Entrada de asset
+Verifique saúde e readiness:
 
-```json
-{
-  "title": "Episódio 01",
-  "hls_url": "https://cdn.example.com/episode-01/master.m3u8"
-}
+```bash
+curl -f http://localhost:8080/healthz
+curl -f http://localhost:8080/readyz
+curl -f http://localhost:8080/version
+curl -f http://localhost:8080/metrics
 ```
 
-## Endpoints iniciais
+Execute o fluxo end-to-end:
 
-- `GET /healthz`
-- `GET /readyz`
-- `POST /v1/assets`
-- `GET /v1/assets/{id}`
-- `POST /v1/assets/{id}/validate`
-- `POST /v1/channels`
-- `GET /v1/channels`
-- `GET /v1/channels/{id}`
-- `POST /v1/channels/{id}/start`
-- `POST /v1/channels/{id}/stop`
-- `GET /v1/channels/{id}/status`
-- `POST /v1/channels/{id}/schedule`
-- `GET /v1/channels/{id}/schedule`
-- `PATCH /v1/schedule/{id}`
-- `DELETE /v1/schedule/{id}`
-- `GET /v1/channels/{id}/master.m3u8`
-- `GET /v1/channels/{id}/media/{variant}.m3u8`
+```bash
+./tests/integration/e2e.sh
+./tests/integration/contract.sh
+```
 
-## Limites atuais do esqueleto
+Para desligar e remover os volumes locais:
 
-A montagem real de manifests e a persistência dos repositórios estão isoladas por interfaces para implementação incremental. Não são aceitos MP4, MPEG-TS ou upload de arquivos.
+```bash
+docker compose down -v
+```
 
-A especificação de integração está em [`openapi.yaml`](./openapi.yaml).
+Execução direta da API, quando PostgreSQL e Redis já estiverem disponíveis:
 
-## Fase 1 concluída
+```bash
+make run
+```
 
-A Fase 1 entrega um MVP executável com persistência PostgreSQL, cache e locks Redis, validação de master/media playlists HLS, grade com CRUD e detecção de conflitos, Manifest Builder, worker contínuo de playout, endpoints de operação, Docker Compose e pipeline CI. O fluxo completo pode ser validado com `docker compose up --build -d` seguido de `./tests/integration/e2e.sh`.
+## Configuração
 
-O CI executa `go test ./...`, constrói os serviços Docker e roda o fluxo end-to-end com PostgreSQL, Redis e uma fixture HLS local. A Fase 2 deve tratar autenticação, segurança de URLs, SSAI/SCTE-35, observabilidade avançada e deploy de produção.
+O Compose local possui valores de desenvolvimento. Em staging e produção, injete as variáveis por secret manager ou pelo ambiente do serviço. O template está em [`deployments/staging/.env.example`](deployments/staging/.env.example).
 
-## Fase 2 — segurança inicial
+Principais variáveis:
 
-Os endpoints de negócio `/v1/*` agora exigem `Authorization: Bearer <access_token>`. `API_KEY` permanece somente para o bootstrap inicial do primeiro administrador; não é aceito nas rotas de conteúdo. `/healthz`, `/readyz`, `/metrics` e `/version` permanecem públicos para operação.
+| Variável | Finalidade |
+|---|---|
+| `APP_ENV` | Ambiente (`development`, `staging` ou `production`) |
+| `HTTP_ADDR` | Endereço de escuta HTTP |
+| `DATABASE_URL` | DSN do PostgreSQL |
+| `REDIS_ADDR` | Endereço do Redis |
+| `API_KEY` | Chave usada somente no bootstrap inicial |
+| `AUTH_TOKEN_SECRET` | Segredo dos tokens de autenticação |
+| `PLAYBACK_TOKEN_SECRET` | Segredo das URLs de playback |
+| `AUTH_TOKEN_TTL_SECONDS` | TTL do token bearer |
+| `PLAYBACK_TOKEN_TTL_SECONDS` | TTL da URL de playback |
+| `ALLOW_PRIVATE_HLS` | Permite origens privadas; deve ser `false` em produção |
+| `HLS_MAX_MANIFEST_BYTES` | Limite do tamanho do manifest |
+| `HLS_REQUEST_TIMEOUT_SECONDS` | Timeout de busca do HLS de origem |
+| `RATE_LIMIT_PER_MINUTE` | Limite de requisições por IP |
+| `CORS_ALLOWED_ORIGIN` | Origem autorizada do player |
 
-## Fase 3 — observabilidade inicial
+Em `APP_ENV=production`, a aplicação aplica validações fail-fast: segredos devem ser suficientemente longos e distintos, origens privadas devem estar desativadas e os limites/TTL precisam ser válidos.
 
-O endpoint público `/metrics` expõe métricas no formato Prometheus: requisições HTTP, erros, falhas de autenticação, solicitações de manifests e estado de readiness. Em produção, restrinja o acesso ao endpoint por rede, ingress ou autenticação do próprio monitoramento.
+## Autenticação e RBAC
 
-## Fase 4 — hardening de origens HLS
+As rotas de negócio `/v1/*` exigem:
 
-O validador HLS bloqueia por padrão origens `localhost`, loopback, IPs privados, link-local, multicast e não especificados, reduzindo risco de SSRF. Para testes locais com o serviço `hls-fixture`, o Compose define `ALLOW_PRIVATE_HLS=true`; em produção, mantenha essa variável como `false`.
+```http
+Authorization: Bearer <access_token>
+```
 
-## Fase 5 — limites de ingestão HLS
+A `API_KEY` não é uma credencial de operação. Ela serve apenas para criar o primeiro administrador através do bootstrap:
 
-Manifests HLS têm limite de tamanho configurável por `HLS_MAX_MANIFEST_BYTES` (8 MiB por padrão), timeout por `HLS_REQUEST_TIMEOUT_SECONDS` (15 segundos por padrão) e no máximo três redirecionamentos HTTP. Respostas maiores ou excessivamente redirecionadas são rejeitadas antes do processamento.
+```bash
+curl -X POST http://localhost:8080/v1/auth/bootstrap \
+  -H 'X-API-Key: <API_KEY>' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "email": "admin@example.com",
+    "password": "uma-senha-com-pelo-menos-12-caracteres",
+    "organization_name": "Minha Organização"
+  }'
+```
 
-## Fase 6 — proteção operacional da API
+Depois, faça login:
 
-Os endpoints `/v1/*` possuem rate limiting por IP, com limite padrão de 120 requisições por minuto configurável por `RATE_LIMIT_PER_MINUTE`. Quando excedido, retornam `429` com `Retry-After`. A API também envia headers básicos de segurança, incluindo `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy` e `Permissions-Policy`.
+```bash
+curl -X POST http://localhost:8080/v1/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "email": "admin@example.com",
+    "password": "uma-senha-com-pelo-menos-12-caracteres"
+  }'
+```
 
-## Fase 7 — rastreabilidade operacional
+Papéis disponíveis:
 
-Cada resposta HTTP recebe `X-Request-ID`. Se o cliente enviar esse header, o mesmo valor é preservado; caso contrário, a API gera um identificador aleatório. Cada requisição é registrada em JSON via `slog`, incluindo método, caminho, status, duração e request ID, facilitando correlação em agregadores de logs.
+- **Administrador (`administrador`)**: usuários, papéis, equipes e todas as operações da organização.
+- **Operador (`operador`)**: inicia/para canais e emite URLs de playback.
+- **Editor (`editor`)**: gerencia ativos, canais e programação.
+- **Visualizador (`visualizador`)**: acesso de leitura permitido.
 
-## Fase 8 — lifecycle seguro
+A alteração de papel ou remoção de associação tem efeito imediato porque a associação organizacional é consultada novamente durante as requisições protegidas.
 
-API e worker de playout tratam `SIGTERM` e `SIGINT`. A API deixa de aceitar novas conexões e aguarda até 10 segundos para encerrar requisições em andamento; o worker cancela o loop de playout e libera recursos. O Compose reserva 15 segundos de `stop_grace_period` para o processo concluir o shutdown.
+## Multi-tenancy
 
-## Fase 9 — resiliência de dependências
+A identidade é organizada em:
 
-PostgreSQL e Redis usam retry com backoff exponencial na inicialização. O processo tenta até oito vezes, aumenta o intervalo entre tentativas até cinco segundos e respeita cancelamento por sinal, evitando falha prematura durante o boot ordenado dos serviços.
+- organizações;
+- usuários;
+- associações usuário-organização;
+- equipes;
+- membros de equipe;
+- papéis por organização;
+- eventos de auditoria.
 
-## Fase 10 — contrato HTTP
+Canais, ativos e itens da grade são isolados por organização. As consultas HTTP filtram pelo tenant do token e as chaves estrangeiras compostas no banco reforçam que uma grade não associe recursos de organizações diferentes.
 
-Os testes de integração criam o administrador por bootstrap, fazem login bearer e verificam o acesso autenticado. O contrato valida request ID, headers de segurança, rejeição de chamadas anônimas e da API key antiga, acesso autenticado a canais e métricas Prometheus.
+Operações de escrita autenticadas registram ator, organização, ação, recurso, status HTTP e request ID na tabela de auditoria.
 
-## Fase 11 — configuração segura por ambiente
+## Ingestão HLS e SSRF
 
-`APP_ENV=production` ativa validações fail-fast: `API_KEY` de bootstrap é obrigatório; `PLAYBACK_TOKEN_SECRET` e `AUTH_TOKEN_SECRET` precisam ser diferentes entre si, únicos para a instalação e ter pelo menos 32 bytes; `ALLOW_PRIVATE_HLS` precisa estar desativado e os TTLs/limites devem ser positivos. A aplicação encerra antes de abrir portas quando a configuração é inválida.
+Somente URLs HTTP(S) de HLS são aceitas. O backend não recebe MP4, MPEG-TS ou uploads para transcodificação.
 
-## Fase 12 — diagnóstico e versão
+Proteções aplicadas:
 
-O endpoint público `GET /version` retorna versão, commit e horário de build. O Dockerfile aceita os argumentos `VERSION`, `COMMIT` e `BUILD_TIME`, permitindo que o CI injete a identidade exata do artefato publicado.
+- bloqueio de `localhost`, loopback, redes privadas, link-local, multicast e endereços não especificados;
+- limite de tamanho do manifest;
+- timeout configurável;
+- no máximo três redirecionamentos;
+- validação de master ou media playlist;
+- bloqueio de origens privadas por padrão.
 
-## Fase 13 — autenticação de playback HLS
+Para fixtures locais do Compose, `ALLOW_PRIVATE_HLS=true` é usado somente no ambiente de desenvolvimento. Em staging e produção, mantenha `ALLOW_PRIVATE_HLS=false`.
 
-O endpoint administrativo `POST /v1/channels/{id}/playback` emite, mediante bearer token com papel `administrador` ou `operador`, uma URL temporária específica para o canal. A resposta inclui `playback_url` relativo e `expires_at`; o player acessa o link sem receber nem expor as credenciais de API. O master, as variantes e cada segmento usam assinaturas HMAC-SHA256 vinculadas ao canal e ao recurso. Tokens ausentes ou inválidos recebem `403`; tokens expirados recebem `410 Gone`.
+## Playback assinado
 
-O master e as media playlists são servidos publicamente em `/playback/{channelID}/master.m3u8` e `/playback/{channelID}/media/{variant}.m3u8`. As URLs dos segmentos são reescritas para `/playback/{channelID}/segment`, que valida a assinatura e faz proxy da origem HLS; as respostas de playback usam `Cache-Control: private, no-store` e `Referrer-Policy: no-referrer`. O proxy restringe URLs a HTTP(S), bloqueia endereços privados quando `ALLOW_PRIVATE_HLS=false` e não segue redirecionamentos.
+Um administrador ou operador pode emitir uma URL temporária por canal:
 
-Configure `PLAYBACK_TOKEN_SECRET` como segredo aleatório com pelo menos 32 bytes e `PLAYBACK_TOKEN_TTL_SECONDS` (padrão: 600). O Compose define um segredo fixo apenas para desenvolvimento local. Em `APP_ENV=production`, a inicialização falha se o segredo de desenvolvimento for usado, se o segredo tiver menos de 32 bytes ou se `ALLOW_PRIVATE_HLS` estiver habilitado. Compartilhe as URLs emitidas como credenciais temporárias e nunca as registre em logs ou referers.
-
-Exemplo de emissão:
-
-```sh
-curl -X POST -H 'Authorization: Bearer <ACCESS_TOKEN>' \
+```bash
+curl -X POST \
+  -H 'Authorization: Bearer <ACCESS_TOKEN>' \
   http://localhost:8080/v1/channels/<CHANNEL_ID>/playback
 ```
 
-O contrato está descrito em [`openapi.yaml`](./openapi.yaml) e os testes de assinatura, expiração, escopo por canal/recurso, reescrita de manifest e proxy de segmentos estão em `internal/playback`.
+A resposta contém uma URL relativa e o horário de expiração. O player usa os endpoints públicos de playback sem receber credenciais administrativas.
 
-## Fase 14 — usuários, organizações e RBAC
+Endpoints principais:
 
-A migração `migrations/002_phase14_identity_tenant.sql` cria organizações, usuários com senha bcrypt, associação usuário-organização, equipes, membros de equipe e trilha de auditoria. Ela transfere os canais, assets e itens da grade existentes para a organização legada; as chaves estrangeiras compostas impedem que um item de grade associe canal e asset de organizações diferentes.
+```text
+GET /playback/{channelID}/master.m3u8
+GET /playback/{channelID}/media/{variant}.m3u8
+GET /playback/{channelID}/segment
+```
 
-Em uma instalação existente, aplique a migração antes de atualizar a API. No Compose, execute `docker compose exec -T postgres psql -U vod2live -d vod2live < migrations/002_phase14_identity_tenant.sql`; em instalações próprias, use a credencial de migração correspondente. Em banco novo, o Compose aplica os arquivos em `migrations/` durante a inicialização do volume. Para o primeiro acesso, use `POST /v1/auth/bootstrap` com `X-API-Key: <API_KEY>`, email, senha de pelo menos 12 caracteres e `organization_name`. Esse endpoint só funciona quando ainda não existe usuário; a chave antiga não autentica mais operações de negócio. Depois, use `POST /v1/auth/login` para receber um token bearer de 15 minutos. Se o usuário pertencer a várias organizações, informe `organization_id` no login.
+As assinaturas HMAC-SHA256 são vinculadas ao canal e ao recurso. A API rejeita token ausente, inválido, expirado ou usado em outro canal/recurso. Tokens expirados retornam `410 Gone`.
 
-Papéis suportados: `administrador`, `operador`, `editor` e `visualizador`. Administradores gerenciam membros/papéis/equipes; podem criar usuários novos (senha obrigatória) ou associar usuários já cadastrados a outra organização (sem alterar sua senha). Editores administram assets, canais e grade; operadores iniciam/param canais e emitem links de playback; visualizadores têm acesso de leitura. A associação e o papel são recarregados do banco a cada chamada, então remoção e alteração de papel têm efeito imediato. As operações de escrita autenticadas registram ator, organização, ação, recurso, status HTTP e request ID em `audit_events`.
+Os manifests e segmentos usam headers de proteção, incluindo `Cache-Control: private, no-store` quando apropriado e `Referrer-Policy: no-referrer`. Os manifests possuem `ETag` SHA-256 e suportam `304 Not Modified`.
 
-As consultas HTTP de assets, canais e grade usam o tenant do token. As equipes e associações também são limitadas à organização, e o banco reforça o isolamento com chaves estrangeiras compostas. `AUTH_TOKEN_SECRET` deve ser um segredo aleatório e independente do segredo de playback; o Compose fornece um valor apenas para desenvolvimento. O E2E valida criação de organização/usuários, RBAC, isolamento entre tenants, emissão de link assinado e rejeição de playback sem token. Para validar a suíte de integração em uma stack limpa, execute `docker compose down -v` e depois `docker compose up --build -d`, `./tests/integration/e2e.sh` e `./tests/integration/contract.sh`.
+Nunca registre URLs de playback em logs, tickets ou ferramentas de analytics. Elas funcionam como credenciais temporárias.
 
-## Fase 15 — observabilidade avançada
+## Manifest Builder
 
-Além dos contadores básicos, `/metrics` expõe contagem de requisições por status HTTP e histograma de latência com buckets fixos. Não são usados labels livres de rota, tenant ou usuário, evitando cardinalidade explosiva no Prometheus.
+O builder:
 
-## Fase 16 — entrega CDN-friendly
+- lê master e media playlists HLS;
+- seleciona variantes;
+- resolve URLs relativas;
+- calcula a posição atual na grade;
+- mantém uma janela de até 12 segmentos;
+- concatena itens consecutivos da programação;
+- insere descontinuidades entre ativos;
+- preserva `#EXT-X-DATERANGE`;
+- preserva `#EXT-X-DISCONTINUITY-SEQUENCE`;
+- calcula `#EXT-X-MEDIA-SEQUENCE`;
+- suporta `loop_enabled=true` para continuidade após o fim da grade;
+- não finaliza o canal com `#EXT-X-ENDLIST`.
 
-Manifests de playback agora enviam `ETag` SHA-256 e respondem `304 Not Modified` quando o cliente reapresenta a mesma versão. A origem CORS é configurável por `CORS_ALLOWED_ORIGIN`; o Compose usa `*` apenas para desenvolvimento. Em produção, informe a origem exata do player e mantenha o cache privado dos manifests assinados.
+A duração do loop é calculada a partir dos horários da grade e, quando necessário, da duração conhecida dos ativos. O relógio é reposicionado no início do ciclo depois do último item.
 
-## Fase 17 — alta disponibilidade do playout
+## Alta disponibilidade
 
-Cada ciclo de playout usa lease Redis com TTL, renovação antes da publicação e fencing token monotônico por canal. A escrita do estado é atômica e só ocorre se o worker ainda possuir o lease correspondente, impedindo que um processo antigo publique estado depois de perder a liderança.
+O worker de playout usa Redis para:
 
-## Fase 18 — continuidade de programação
+- lease por canal;
+- renovação do lease;
+- fencing token monotônico;
+- escrita atômica de estado;
+- prevenção contra publicação atrasada por um worker que perdeu liderança.
 
-Quando `loop_enabled=true`, o Manifest Builder calcula a duração real da grade a partir dos `ends_at` ou das durações dos assets e reposiciona o relógio no início do ciclo após o último item. Isso evita que um canal linear fique sem segmentos ao final da programação. A próxima extensão da fase é adicionar eventos comerciais e SCTE-35 sobre essa base.
+Múltiplos workers podem executar simultaneamente, mas apenas o processo que possui o lease e o fencing token válido deve publicar o estado do canal.
 
-## Fase 19 — metadados HLS de eventos
+Smoke test local:
 
-O parser e o serializador preservam tags `#EXT-X-DATERANGE` nas media playlists, mantendo marcadores de eventos durante o processamento. Essa base permite adicionar cues comerciais e SCTE-35 sem descartar metadados HLS existentes.
+```bash
+make ha-smoke
+```
 
-## Fase 20 — operação de banco e recuperação
+O teste verifica exclusão mútua da aquisição, monotonicidade do fencing token e preservação do proprietário do lease.
 
-O projeto fornece backup PostgreSQL em formato customizado, verificação do catálogo do dump e restore explícito protegido por confirmação. Com a stack ativa, use `make db-backup`, valide com `make db-verify-backup BACKUP_FILE=backups/arquivo.dump` e só execute `make db-restore BACKUP_FILE=...` após confirmar que a operação destrutiva é desejada. O CI também gera e valida um dump temporário em cada execução integrada.
+## Observabilidade
 
-## Fase 21 — teste de carga operacional
+A API fornece:
 
-O script `scripts/load-test.sh` executa requisições concorrentes contra `/healthz`, `/readyz` e `/version`, com `REQUESTS` e `CONCURRENCY` configuráveis. O CI roda 120 requisições com concorrência 8 e falha quando qualquer endpoint retorna status diferente de 200. Execute localmente com `REQUESTS=500 CONCURRENCY=16 make load-test`.
+```text
+GET /healthz
+GET /readyz
+GET /metrics
+GET /version
+```
 
-## Fase 22 — migrações reaplicáveis
+O logging usa JSON estruturado via `slog` e inclui método, caminho, status, duração e `X-Request-ID`.
 
-As constraints da migração multi-tenant usam blocos idempotentes e podem ser reaplicadas sem erro. O script `scripts/verify-migrations.sh` executa novamente todos os SQLs com `ON_ERROR_STOP=1`; o CI e o comando `make verify-migrations` usam esse gate para detectar migrações incompatíveis com upgrades.
+As métricas Prometheus incluem:
 
-## Pré-produção operacional
+- `vod2live_http_requests_total`;
+- `vod2live_http_errors_total`;
+- `vod2live_http_requests_by_status_total`;
+- `vod2live_http_request_duration_seconds`;
+- `vod2live_auth_failures_total`;
+- `vod2live_manifest_requests_total`;
+- `vod2live_ready`;
+- `vod2live_build_info`.
 
-O CI também valida a configuração do Compose, executa o smoke de lease/fencing Redis e faz carga concorrente sobre uma URL de playback emitida pelo E2E. Os comandos locais equivalentes são `make ha-smoke` e `PLAYBACK_URL=... make playback-load-test`.
+Configuração e alertas:
 
-O template de staging está em [`deployments/staging/.env.example`](deployments/staging/.env.example), o Compose de imagens imutáveis em [`deployments/staging/docker-compose.staging.yml`](deployments/staging/docker-compose.staging.yml), o runbook de RPO/RTO e rollback em [`deployments/staging/RUNBOOK.md`](deployments/staging/RUNBOOK.md) e a estratégia CDN em [`deployments/staging/CDN.md`](deployments/staging/CDN.md). Não coloque segredos nesses arquivos; injete-os pelo ambiente ou pelo secret manager.
+- [`deployments/observability/prometheus.yml`](deployments/observability/prometheus.yml)
+- [`deployments/observability/rules.yml`](deployments/observability/rules.yml)
+
+O endpoint `/metrics` deve ser restringido por rede, ingress ou autenticação do sistema de monitoramento em produção.
+
+## Banco, backup e recuperação
+
+O PostgreSQL é a fonte persistente do sistema. Redis contém estado derivado, cache e locks; sua perda não deve destruir a configuração ou a grade, mas exige reaquisição dos leases pelos workers.
+
+Com a stack ativa:
+
+```bash
+make db-backup
+make db-verify-backup BACKUP_FILE=backups/arquivo.dump
+```
+
+Restore é destrutivo e exige confirmação explícita:
+
+```bash
+make db-restore BACKUP_FILE=backups/arquivo.dump
+```
+
+As migrações são reaplicáveis e podem ser verificadas com:
+
+```bash
+make verify-migrations
+```
+
+O runbook de recuperação, RPO/RTO e rollback está em [`deployments/staging/RUNBOOK.md`](deployments/staging/RUNBOOK.md).
+
+Objetivos operacionais documentados:
+
+- **RPO alvo:** 15 minutos;
+- **RTO alvo:** 30 minutos.
+
+Esses objetivos dependem de backups externos, armazenamento durável, secret manager, automação de provisionamento e testes periódicos de restauração.
+
+## Staging e CDN
+
+O Compose de staging usa imagens imutáveis e secrets injetados pelo ambiente:
+
+```bash
+docker compose \
+  -f docker-compose.yml \
+  -f deployments/staging/docker-compose.staging.yml \
+  config
+```
+
+O arquivo [`deployments/staging/.env.example`](deployments/staging/.env.example) contém somente nomes e exemplos, nunca segredos reais.
+
+A estratégia CDN recomendada está em [`deployments/staging/CDN.md`](deployments/staging/CDN.md). Em resumo:
+
+- master e media playlists devem ter TTL curto;
+- segmentos devem ser cacheados por URL completa;
+- a CDN deve respeitar ETag e `304`;
+- API administrativa não deve ficar atrás de cache público;
+- query strings de assinatura precisam permanecer na chave de cache ou ser validadas no edge;
+- CORS deve apontar para o domínio real do player;
+- origin, erros, hit ratio e latência devem ser monitorados.
+
+## Testes e CI
+
+Testes unitários:
+
+```bash
+make test
+```
+
+Formatação:
+
+```bash
+make fmt
+```
+
+Testes de integração:
+
+```bash
+make e2e
+make contract
+```
+
+Carga básica de endpoints operacionais:
+
+```bash
+REQUESTS=500 CONCURRENCY=16 make load-test
+```
+
+Carga de playback. Primeiro obtenha uma URL assinada e informe-a sem expô-la em logs:
+
+```bash
+PLAYBACK_URL='http://localhost:8080/playback/...' \
+REQUESTS=500 CONCURRENCY=16 \
+make playback-load-test
+```
+
+O CI executa:
+
+1. `go test ./...`;
+2. validação do Compose;
+3. build da API e do worker;
+4. PostgreSQL, Redis e fixture HLS;
+5. E2E e contrato HTTP;
+6. smoke de fencing Redis;
+7. carga de playback;
+8. carga de endpoints operacionais;
+9. verificação de migrações;
+10. dump e validação básica do PostgreSQL.
+
+A validação integrada precisa ser executada em um runner com Docker habilitado.
+
+## Estrutura do projeto
+
+```text
+cmd/
+  api/                  API HTTP principal
+  playout/              Worker contínuo de playout
+  scheduler/            Ponto de extensão para scheduler
+  validator/             Ponto de extensão para validação
+internal/
+  asset/                Ativos HLS e persistência
+  auth/                 Tokens, papéis e autorização
+  channel/              Canais e estado
+  config/               Configuração e validação por ambiente
+  db/                   Conexão e retry de dependências
+  health/               Health/readiness checks
+  identity/             Usuários, organizações, equipes e auditoria
+  manifest/             Montagem dos manifests lineares
+  metrics/              Métricas Prometheus
+  observability/        Logging e middleware operacional
+  playback/             URLs assinadas e proxy HLS
+  playout/              Lease, fencing e estado do worker
+  ratelimit/             Limitação por IP
+  retry/                Backoff de dependências
+pkg/hls/                 Parser e renderer HLS
+migrations/              Migrações PostgreSQL
+scripts/                 Backup, restore, carga e validações
+tests/
+  fixtures/             Origem HLS local para testes
+  integration/           E2E, contrato e smoke tests
+deployments/
+  docker/               Dockerfiles
+  observability/        Prometheus e alertas
+  staging/              Compose, env template e runbooks
+```
+
+## API
+
+A especificação OpenAPI está em [`openapi.yaml`](openapi.yaml).
+
+Endpoints administrativos principais:
+
+```text
+POST   /v1/auth/bootstrap
+POST   /v1/auth/login
+GET    /v1/users
+POST   /v1/users
+PATCH  /v1/users/{userID}/role
+DELETE /v1/users/{userID}
+POST   /v1/teams
+POST   /v1/teams/{teamID}/members
+DELETE /v1/teams/{teamID}/members/{userID}
+POST   /v1/assets
+GET    /v1/assets/{id}
+POST   /v1/assets/{id}/validate
+POST   /v1/channels
+GET    /v1/channels
+GET    /v1/channels/{id}
+POST   /v1/channels/{id}/start
+POST   /v1/channels/{id}/stop
+GET    /v1/channels/{id}/status
+POST   /v1/channels/{id}/schedule
+GET    /v1/channels/{id}/schedule
+PATCH  /v1/schedule/{id}
+DELETE /v1/schedule/{id}
+POST   /v1/channels/{id}/playback
+```
+
+Endpoints operacionais públicos:
+
+```text
+GET /healthz
+GET /readyz
+GET /metrics
+GET /version
+```
+
+## Limitações e próximos passos
+
+Antes de produção, ainda é necessário concluir e evidenciar no ambiente-alvo:
+
+- teste de concorrência com múltiplos workers reais e interrupção de processos;
+- teste de carga com volume, duração e distribuição semelhantes ao tráfego esperado;
+- validação de failover PostgreSQL/Redis e comportamento durante perda de rede;
+- provisionamento real de staging com secret manager;
+- integração com o provedor CDN escolhido;
+- teste de restauração completo medindo RPO e RTO;
+- política de retenção e cópia externa dos backups;
+- dashboards operacionais e alertas integrados ao canal de incidentes;
+- validação do comportamento de sliding window com diferentes durações e eventos SCTE-35;
+- revisão de segurança independente antes da exposição pública.
+
+O projeto não implementa transcodificação, ingestão de arquivos, empacotamento de novas variantes, DRM, SCTE-35 completo, gravação de live input ou controle visual de grade. Esses recursos devem ser tratados como produtos separados ou extensões explícitas da arquitetura atual.
+
+## Licença e contribuição
+
+Consulte as políticas do repositório antes de distribuir ou modificar o software. Pull requests devem incluir testes, atualização da documentação quando necessário e evidência dos gates aplicáveis.
