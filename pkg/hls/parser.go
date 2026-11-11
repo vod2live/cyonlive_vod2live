@@ -46,26 +46,28 @@ func ParseMedia(text string) (MediaPlaylist, error) {
 	var out MediaPlaylist
 	lines := lines(text)
 	var pending float64
+	pendingDiscontinuity := false
 	for _, line := range lines {
 		switch {
 		case strings.HasPrefix(line, "#EXT-X-TARGETDURATION:"):
 			out.TargetDuration = int(parseInt(strings.TrimPrefix(line, "#EXT-X-TARGETDURATION:")))
 		case strings.HasPrefix(line, "#EXT-X-MEDIA-SEQUENCE:"):
 			out.MediaSequence = uint64(parseInt(strings.TrimPrefix(line, "#EXT-X-MEDIA-SEQUENCE:")))
+		case strings.HasPrefix(line, "#EXT-X-DISCONTINUITY-SEQUENCE:"):
+			out.DiscontinuitySequence = uint64(parseInt(strings.TrimPrefix(line, "#EXT-X-DISCONTINUITY-SEQUENCE:")))
 		case strings.HasPrefix(line, "#EXT-X-DATERANGE:"):
 			out.DateRanges = append(out.DateRanges, line)
 		case strings.HasPrefix(line, "#EXTINF:"):
 			value := strings.TrimSuffix(strings.TrimPrefix(line, "#EXTINF:"), ",")
 			pending, _ = strconv.ParseFloat(value, 64)
 		case line == "#EXT-X-DISCONTINUITY":
-			if len(out.Segments) > 0 {
-				out.Segments[len(out.Segments)-1].Discontinuity = true
-			}
+			pendingDiscontinuity = true
 		case line == "#EXT-X-ENDLIST":
 			out.EndList = true
 		case line != "" && !strings.HasPrefix(line, "#"):
-			out.Segments = append(out.Segments, Segment{URI: line, Duration: pending})
+			out.Segments = append(out.Segments, Segment{URI: line, Duration: pending, Discontinuity: pendingDiscontinuity})
 			pending = 0
+			pendingDiscontinuity = false
 		}
 	}
 	if len(out.Segments) == 0 {
@@ -154,6 +156,9 @@ func RenderMedia(p MediaPlaylist, mediaSequence uint64, endList bool) string {
 		target = 6
 	}
 	fmt.Fprintf(&b, "#EXT-X-TARGETDURATION:%d\n#EXT-X-MEDIA-SEQUENCE:%d\n", target, mediaSequence)
+	if p.DiscontinuitySequence > 0 {
+		fmt.Fprintf(&b, "#EXT-X-DISCONTINUITY-SEQUENCE:%d\n", p.DiscontinuitySequence)
+	}
 	for _, dateRange := range p.DateRanges {
 		b.WriteString(dateRange + "\n")
 	}

@@ -110,6 +110,7 @@ func (s Service) Media(ctx context.Context, channelID uuid.UUID, variant string,
 	}
 	var out hls.MediaPlaylist
 	var sequence uint64
+	var discontinuitySequence uint64
 	total := 0
 	for i := current; i < len(items) && total < 12; i++ {
 		a, e := s.Assets.FindByID(ctx, items[i].AssetID)
@@ -141,11 +142,19 @@ func (s Service) Media(ctx context.Context, channelID uuid.UUID, variant string,
 			continue
 		}
 		start := 0
+		if total == 0 {
+			discontinuitySequence = media.DiscontinuitySequence
+		}
 		if i == current && now.After(items[i].StartsAt) {
 			elapsed := now.Sub(items[i].StartsAt).Seconds()
 			for start < len(media.Segments) && elapsed >= media.Segments[start].Duration {
 				elapsed -= media.Segments[start].Duration
 				start++
+			}
+		}
+		for skipped := 0; skipped < start && skipped < len(media.Segments); skipped++ {
+			if media.Segments[skipped].Discontinuity {
+				discontinuitySequence++
 			}
 		}
 		for j := start; j < len(media.Segments) && total < 12; j++ {
@@ -165,6 +174,7 @@ func (s Service) Media(ctx context.Context, channelID uuid.UUID, variant string,
 	if len(out.Segments) == 0 {
 		return nil, fmt.Errorf("no playable HLS segments")
 	}
+	out.DiscontinuitySequence = discontinuitySequence
 	body := []byte(hls.RenderMedia(out, sequence, false))
 	s.Cache.Set(ctx, cacheKey, body)
 	return body, nil

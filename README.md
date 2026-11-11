@@ -170,3 +170,9 @@ O script `scripts/load-test.sh` executa requisições concorrentes contra `/heal
 ## Fase 22 — migrações reaplicáveis
 
 As constraints da migração multi-tenant usam blocos idempotentes e podem ser reaplicadas sem erro. O script `scripts/verify-migrations.sh` executa novamente todos os SQLs com `ON_ERROR_STOP=1`; o CI e o comando `make verify-migrations` usam esse gate para detectar migrações incompatíveis com upgrades.
+
+## Pré-produção operacional
+
+O CI também valida a configuração do Compose, executa o smoke de lease/fencing Redis e faz carga concorrente sobre uma URL de playback emitida pelo E2E. Os comandos locais equivalentes são `make ha-smoke` e `PLAYBACK_URL=... make playback-load-test`.
+
+O template de staging está em [`deployments/staging/.env.example`](deployments/staging/.env.example), o Compose de imagens imutáveis em [`deployments/staging/docker-compose.staging.yml`](deployments/staging/docker-compose.staging.yml), o runbook de RPO/RTO e rollback em [`deployments/staging/RUNBOOK.md`](deployments/staging/RUNBOOK.md) e a estratégia CDN em [`deployments/staging/CDN.md`](deployments/staging/CDN.md). Não coloque segredos nesses arquivos; injete-os pelo ambiente ou pelo secret manager.

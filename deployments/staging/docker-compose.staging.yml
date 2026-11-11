@@ -1,0 +1,23 @@
+services:
+  api:
+    image: ${IMAGE_REPOSITORY:-ghcr.io/vod2live/cyonlive_vod2live}:${IMAGE_TAG:?IMAGE_TAG is required}
+    build: !reset null
+    ports: !reset []
+    environment:
+      APP_ENV: staging
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
+      REDIS_ADDR: ${REDIS_ADDR:?REDIS_ADDR is required}
+      API_KEY: ${API_KEY:?API_KEY is required}
+      AUTH_TOKEN_SECRET: ${AUTH_TOKEN_SECRET:?AUTH_TOKEN_SECRET is required}
+      PLAYBACK_TOKEN_SECRET: ${PLAYBACK_TOKEN_SECRET:?PLAYBACK_TOKEN_SECRET is required}
+      ALLOW_PRIVATE_HLS: "false"
+      CORS_ALLOWED_ORIGIN: ${CORS_ALLOWED_ORIGIN:?CORS_ALLOWED_ORIGIN is required}
+    restart: unless-stopped
+
+  playout:
+    image: ${IMAGE_REPOSITORY:-ghcr.io/vod2live/cyonlive_vod2live}:${IMAGE_TAG:?IMAGE_TAG is required}
+    build: !reset null
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
+      REDIS_ADDR: ${REDIS_ADDR:?REDIS_ADDR is required}
+    restart: unless-stopped

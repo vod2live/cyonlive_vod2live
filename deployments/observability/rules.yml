@@ -1,0 +1,18 @@
+groups:
+  - name: vod2live
+    rules:
+      - alert: Vod2LiveAPIUnavailable
+        expr: up{job="vod2live-api"} == 0
+        for: 2m
+        labels: { severity: critical }
+        annotations: { summary: "Vod2Live API indisponível" }
+      - alert: Vod2LiveHTTPErrorRateHigh
+        expr: rate(vod2live_http_errors_total[5m]) / clamp_min(rate(vod2live_http_requests_total[5m]), 1) > 0.05
+        for: 10m
+        labels: { severity: warning }
+        annotations: { summary: "Taxa de erro HTTP acima de 5%" }
+      - alert: Vod2LivePlaybackAuthFailures
+        expr: rate(vod2live_auth_failures_total[5m]) > 1
+        for: 5m
+        labels: { severity: warning }
+        annotations: { summary: "Falhas de autenticação de playback elevadas" }

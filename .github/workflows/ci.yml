@@ -15,10 +15,13 @@ jobs:
         with:
           go-version: '1.22'
       - run: go test ./...
+      - run: docker compose config --quiet
       - run: VERSION=${GITHUB_REF_NAME} COMMIT=${GITHUB_SHA} BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ) docker compose build api playout
       - run: docker compose up -d postgres redis hls-fixture api playout
       - run: ./tests/integration/e2e.sh
       - run: ./tests/integration/contract.sh
+      - run: ./scripts/ha-smoke.sh
+      - run: PLAYBACK_URL="$(cat /tmp/vod2live-playback-url)" REQUESTS=60 CONCURRENCY=6 ./scripts/playback-load-test.sh
       - run: REQUESTS=120 CONCURRENCY=8 ./scripts/load-test.sh
       - run: ./scripts/verify-migrations.sh
       - run: mkdir -p /tmp/vod2live-ci && docker compose exec -T postgres pg_dump -Fc -U vod2live -d vod2live > /tmp/vod2live-ci/database.dump

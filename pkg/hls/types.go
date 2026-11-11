@@ -24,11 +24,12 @@ type Rendition struct {
 }
 
 type MediaPlaylist struct {
-	TargetDuration int
-	MediaSequence  uint64
-	Segments       []Segment
-	DateRanges     []string
-	EndList        bool
+	TargetDuration        int
+	MediaSequence         uint64
+	DiscontinuitySequence uint64
+	Segments              []Segment
+	DateRanges            []string
+	EndList               bool
 }
 
 type Segment struct {
