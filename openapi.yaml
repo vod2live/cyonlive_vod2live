@@ -38,6 +38,28 @@ paths:
       responses:
         '200': { description: Manifesto validado }
         '422': { description: Manifesto inválido }
+  /v1/review/assets:
+    get:
+      summary: Listar assets processados aguardando revisão editorial
+      responses:
+        '200': { description: Fila da organização ativa }
+  /v1/assets/{id}/review:
+    post:
+      summary: Aprovar ou rejeitar um asset processado
+      parameters: [{ $ref: '#/components/parameters/Id' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [decision]
+              properties:
+                decision: { type: string, enum: [approve, reject] }
+                note: { type: string }
+      responses:
+        '200': { description: Decisão registrada }
+        '409': { description: Asset ainda não está pronto ou já foi revisado }
   /v1/channels:
     post:
       summary: Criar canal
@@ -345,3 +367,4 @@ components:
         name: { type: string }
         slug: { type: string }
         loop_enabled: { type: boolean }
+        tenant_id: { type: string, format: uuid, nullable: true, description: Se ausente, o canal só pode consumir conteúdo compartilhado da organização }

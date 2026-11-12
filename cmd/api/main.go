@@ -138,6 +138,8 @@ func main() {
 			api.With(auth.RequireRoles(auth.RoleAdmin)).Delete("/teams/{teamID}/members/{userID}", identityHandler.RemoveTeamMember)
 
 			api.With(auth.RequireRoles(auth.RoleAdmin, auth.RoleEditor)).Post("/assets", createAsset(assets))
+			api.With(auth.RequireRoles(auth.RoleAdmin, auth.RoleEditor)).Get("/review/assets", reviewQueue(assets))
+			api.With(auth.RequireRoles(auth.RoleAdmin, auth.RoleEditor)).Post("/assets/{id}/review", reviewAsset(assets))
 			api.Get("/assets/{id}", getAsset(assets))
 			api.With(auth.RequireRoles(auth.RoleAdmin, auth.RoleEditor)).Post("/assets/{id}/validate", validateAsset(assets))
 			api.With(auth.RequireRoles(auth.RoleAdmin, auth.RoleEditor)).Post("/channels", createChannel(channels))
@@ -248,10 +250,64 @@ func validateAsset(repo asset.PostgresRepository) http.HandlerFunc {
 	}
 }
 
+func reviewQueue(repo asset.PostgresRepository) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		principal, ok := auth.PrincipalFrom(r.Context())
+		if !ok {
+			http.Error(w, "não autorizado", http.StatusUnauthorized)
+			return
+		}
+		items, err := repo.ListAwaitingReview(r.Context(), principal.OrganizationID)
+		if err != nil {
+			http.Error(w, "erro ao consultar fila de revisão", http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, http.StatusOK, items)
+	}
+}
+
+func reviewAsset(repo asset.PostgresRepository) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, err := uuid.Parse(chi.URLParam(r, "id"))
+		if err != nil {
+			http.Error(w, "id inválido", http.StatusBadRequest)
+			return
+		}
+		principal, ok := auth.PrincipalFrom(r.Context())
+		if !ok {
+			http.Error(w, "não autorizado", http.StatusUnauthorized)
+			return
+		}
+		var req struct {
+			Decision string `json:"decision"`
+			Note     string `json:"note"`
+		}
+		if json.NewDecoder(r.Body).Decode(&req) != nil || (req.Decision != "approve" && req.Decision != "reject") {
+			http.Error(w, "decision deve ser approve ou reject", http.StatusBadRequest)
+			return
+		}
+		err = repo.Review(r.Context(), principal.OrganizationID, id, principal.UserID, req.Decision == "approve", req.Note)
+		if errors.Is(err, asset.ErrReviewNotAllowed) {
+			http.Error(w, "asset não está pronto para revisão ou já foi decidido", http.StatusConflict)
+			return
+		}
+		if err != nil {
+			http.Error(w, "erro ao registrar revisão", http.StatusInternalServerError)
+			return
+		}
+		status := asset.ApprovalRejected
+		if req.Decision == "approve" {
+			status = asset.ApprovalApproved
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"asset_id": id, "approval_status": status, "reviewed_by": principal.UserID, "note": strings.TrimSpace(req.Note)})
+	}
+}
+
 type channelRequest struct {
-	Name        string `json:"name"`
-	Slug        string `json:"slug"`
-	LoopEnabled bool   `json:"loop_enabled"`
+	Name        string     `json:"name"`
+	Slug        string     `json:"slug"`
+	LoopEnabled bool       `json:"loop_enabled"`
+	TenantID    *uuid.UUID `json:"tenant_id,omitempty"`
 }
 
 func createChannel(repo channel.PostgresRepository) http.HandlerFunc {
@@ -270,7 +326,7 @@ func createChannel(repo channel.PostgresRepository) http.HandlerFunc {
 		if slug == "" {
 			slug = channel.NormalizeSlug(req.Name)
 		}
-		item := channel.Channel{ID: uuid.New(), OrganizationID: principal.OrganizationID, Name: req.Name, Slug: slug, Status: "draft", LoopEnabled: req.LoopEnabled}
+		item := channel.Channel{ID: uuid.New(), OrganizationID: principal.OrganizationID, TenantID: req.TenantID, Name: req.Name, Slug: slug, Status: "draft", LoopEnabled: req.LoopEnabled}
 		if err := repo.Create(r.Context(), item); err != nil {
 			http.Error(w, "erro ao criar canal", 500)
 			return
@@ -383,7 +439,8 @@ func createScheduleItem(channels channel.PostgresRepository, assets asset.Postgr
 			http.Error(w, "id de canal inválido", 400)
 			return
 		}
-		if _, err = channels.FindByIDInOrg(r.Context(), principal.OrganizationID, channelID); err != nil {
+		channelItem, findErr := channels.FindByIDInOrg(r.Context(), principal.OrganizationID, channelID)
+		if findErr != nil {
 			http.Error(w, "canal não encontrado", 404)
 			return
 		}
@@ -393,8 +450,8 @@ func createScheduleItem(channels channel.PostgresRepository, assets asset.Postgr
 			return
 		}
 		assetItem, err := assets.FindByIDInOrg(r.Context(), principal.OrganizationID, req.AssetID)
-		if err != nil || assetItem.Status != asset.StatusValid {
-			http.Error(w, "asset precisa estar validado", 422)
+		if err != nil || !asset.EligibleForChannel(assetItem, channelItem.TenantID) {
+			http.Error(w, "asset precisa estar aprovado e pertencer ao escopo do canal", 422)
 			return
 		}
 		if req.EndsAt == nil && assetItem.DurationMS > 0 {
@@ -405,6 +462,8 @@ func createScheduleItem(channels channel.PostgresRepository, assets asset.Postgr
 		if err := repo.Create(r.Context(), item); err != nil {
 			if errors.Is(err, context.Canceled) {
 				http.Error(w, "requisição cancelada", 499)
+			} else if errors.Is(err, schedule.ErrAssetUnavailable) {
+				http.Error(w, "asset não aprovado ou fora do escopo do canal", 422)
 			} else if strings.Contains(err.Error(), "schedule conflict") {
 				http.Error(w, "conflito de horário na grade", 409)
 			} else {
@@ -467,6 +526,8 @@ func updateScheduleItem(repo schedule.PostgresRepository) http.HandlerFunc {
 		if err = repo.Update(r.Context(), principal.OrganizationID, id, req.StartsAt, req.EndsAt, req.Position, req.Enabled); err != nil {
 			if errors.Is(err, schedule.ErrNotFound) {
 				http.Error(w, "item não encontrado", http.StatusNotFound)
+			} else if errors.Is(err, schedule.ErrAssetUnavailable) {
+				http.Error(w, "asset não aprovado ou fora do escopo do canal", 422)
 			} else if strings.Contains(err.Error(), "schedule conflict") {
 				http.Error(w, "conflito de horário na grade", 409)
 			} else {

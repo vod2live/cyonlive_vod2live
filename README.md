@@ -383,10 +383,10 @@ Esses objetivos dependem de backups externos, armazenamento durável, secret man
 
 ## Biblioteca, quotas e conversão HLS
 
-O pipeline de mídia permite que a organização mantenha uma biblioteca compartilhada e que cada tenant tenha uma biblioteca própria com quota independente. O PostgreSQL controla metadados, reservas e consumo; o MinIO guarda objetos; o worker executa a conversão em segundo plano.
+O pipeline de mídia permite que a organização mantenha uma biblioteca compartilhada e que cada tenant tenha uma biblioteca privada com quota independente. Conteúdo de biblioteca da organização pode ser usado por canais de qualquer tenant da mesma organização; conteúdo de biblioteca privada só pode ser associado a canais do tenant proprietário. Canais recebem `tenant_id` opcional: canal sem tenant só pode usar conteúdo compartilhado da organização. O PostgreSQL controla metadados, reservas, escopo e consumo; o MinIO guarda objetos; o worker executa a conversão em segundo plano.
 
 ```text
-upload pré-assinado → MinIO/quarantine → media_jobs → FFmpeg → HLS validado → biblioteca → grade
+upload → quarentena → conversão FFmpeg → aguardando revisão → aprovado/rejeitado → grade
 ```
 
 Endpoints adicionados:
@@ -397,9 +397,13 @@ POST /v1/libraries
 GET  /v1/storage/quota
 POST /v1/libraries/{libraryID}/uploads
 POST /v1/uploads/{uploadID}/complete
+GET  /v1/review/assets
+POST /v1/assets/{id}/review
 ```
 
-O upload reserva quota antes de gerar a URL pré-assinada. Ao ser confirmado, cria um job assíncrono. O `media-worker` baixa o original do MinIO, executa FFmpeg em container, produz um master HLS com variante 720p, envia playlists/segmentos de volta ao MinIO e marca o asset como `valid`. Somente assets processados podem entrar na grade.
+O upload reserva quota antes de gerar a URL pré-assinada. Ao ser confirmado, cria um job assíncrono. O `media-worker` baixa o original do MinIO, executa FFmpeg em container, produz um master HLS com variante 720p e envia playlists/segmentos de volta ao MinIO. A conversão bem-sucedida marca o asset como tecnicamente `valid`, mas seu estado editorial permanece `pending`; ele não pode ser agendado até que um administrador/editor o aprove pela fila de revisão. A decisão e o revisor ficam registrados; rejeições desabilitam itens de grade existentes. A verificação é feita no backend ao criar/reativar programação e ao consultar a grade usada pelo manifest.
+
+Assets de bibliotecas privadas carregam o `tenant_id` da biblioteca. A API e as consultas de programação permitem conteúdo privado somente quando o `tenant_id` do canal coincide; bibliotecas compartilhadas da organização têm `tenant_id` nulo e podem ser usadas por qualquer tenant daquela organização. Os endpoints atuais autorizam administradores e editores organizacionais; o modelo de identidade ainda não inclui associação de usuário a tenant.
 
 O Compose local inclui `minio` e `media-worker`. Para produção, use bucket privado, credenciais via secret manager, limites de CPU/memória no worker e políticas de retenção para originais, temporários e HLS publicado.
 

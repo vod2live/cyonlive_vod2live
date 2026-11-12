@@ -121,7 +121,7 @@ func (r Repository) ReserveUpload(ctx context.Context, org uuid.UUID, tenant *uu
 	if _, err = tx.Exec(ctx, `UPDATE storage_pools SET reserved_bytes=reserved_bytes+$1,updated_at=now() WHERE organization_id=$2 AND tenant_id IS NOT DISTINCT FROM $3`, expected, org, tenant); err != nil {
 		return Upload{}, err
 	}
-	if _, err = tx.Exec(ctx, `INSERT INTO assets (id,organization_id,library_id,title,hls_url,status,metadata) VALUES ($1,$2,$3,$4,$5,'pending',$6)`, assetID, org, libraryID, name, "", `{"source":"managed-upload"}`); err != nil {
+	if _, err = tx.Exec(ctx, `INSERT INTO assets (id,organization_id,library_id,tenant_id,title,hls_url,status,approval_status,metadata) VALUES ($1,$2,$3,$4,$5,$6,'pending','pending',$7)`, assetID, org, libraryID, tenant, name, "", `{"source":"managed-upload"}`); err != nil {
 		return Upload{}, err
 	}
 	if _, err = tx.Exec(ctx, `INSERT INTO storage_objects (id,organization_id,tenant_id,library_id,asset_id,bucket,object_key,content_type,expected_size_bytes,status) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'uploading')`, objectID, org, tenant, libraryID, assetID, bucket, key, contentType, expected); err != nil {
