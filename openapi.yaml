@@ -146,6 +146,23 @@ paths:
     post:
       summary: Criar organização e tornar o usuário administrador
       responses: { '201': { description: Organização criada } }
+  /v1/tenants:
+    get:
+      summary: Listar tenants da organização ativa
+      responses: { '200': { description: Tenants } }
+    post:
+      summary: Criar tenant na organização ativa
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, slug]
+              properties:
+                name: { type: string }
+                slug: { type: string }
+      responses: { '201': { description: Tenant criado } }
   /v1/users:
     get:
       summary: Listar usuários da organização ativa
@@ -172,6 +189,84 @@ paths:
       parameters:
         - { name: teamID, in: path, required: true, schema: { type: string, format: uuid } }
       responses: { '204': { description: Membro adicionado }, '500': { description: Equipe ou usuário não pertence à organização } }
+  /v1/libraries:
+    get:
+      summary: Listar bibliotecas da organização ativa
+      responses: { '200': { description: Bibliotecas compartilhadas e de tenant } }
+    post:
+      summary: Criar biblioteca
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string }
+                tenant_id: { type: string, format: uuid, nullable: true }
+      responses: { '201': { description: Biblioteca criada } }
+  /v1/storage/quota:
+    get:
+      summary: Consultar quota e consumo de armazenamento
+      parameters:
+        - name: tenant_id
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+      responses: { '200': { description: Quota total, utilizada, reservada e disponível } }
+    post:
+      summary: Definir quota de armazenamento
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [quota_bytes]
+              properties:
+                tenant_id: { type: string, format: uuid, nullable: true }
+                quota_bytes: { type: integer, format: int64, minimum: 0 }
+      responses: { '200': { description: Quota atualizada } }
+  /v1/libraries/{libraryID}/uploads:
+    post:
+      summary: Reservar quota e gerar URL pré-assinada de upload
+      parameters:
+        - name: libraryID
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [filename, content_type, size_bytes]
+              properties:
+                filename: { type: string }
+                content_type: { type: string }
+                size_bytes: { type: integer, format: int64 }
+                tenant_id: { type: string, format: uuid, nullable: true }
+      responses: { '201': { description: Upload reservado; URL pré-assinada retornada }, '422': { description: Quota insuficiente ou biblioteca inválida } }
+  /v1/uploads/{uploadID}/complete:
+    post:
+      summary: Confirmar upload e criar job de conversão HLS
+      parameters:
+        - name: uploadID
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [size_bytes]
+              properties:
+                size_bytes: { type: integer, format: int64 }
+      responses: { '200': { description: Upload confirmado; conversão assíncrona iniciada }, '422': { description: Objeto ausente ou tamanho divergente } }
   /playback/{channelID}/master.m3u8:
     get:
       summary: Manifesto master HLS público com assinatura

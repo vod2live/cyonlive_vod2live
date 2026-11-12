@@ -25,6 +25,7 @@ import (
 	"github.com/vod2live/cyonlive_vod2live/internal/db"
 	"github.com/vod2live/cyonlive_vod2live/internal/health"
 	"github.com/vod2live/cyonlive_vod2live/internal/identity"
+	"github.com/vod2live/cyonlive_vod2live/internal/library"
 	"github.com/vod2live/cyonlive_vod2live/internal/manifest"
 	"github.com/vod2live/cyonlive_vod2live/internal/metrics"
 	"github.com/vod2live/cyonlive_vod2live/internal/observability"
@@ -34,6 +35,7 @@ import (
 	"github.com/vod2live/cyonlive_vod2live/internal/retry"
 	"github.com/vod2live/cyonlive_vod2live/internal/schedule"
 	"github.com/vod2live/cyonlive_vod2live/internal/security"
+	"github.com/vod2live/cyonlive_vod2live/internal/storage"
 )
 
 func main() {
@@ -52,9 +54,15 @@ func main() {
 		log.Fatalf("redis: %v", err)
 	}
 	assets := asset.PostgresRepository{Pool: pool}
+	mediaCfg := config.LoadMedia()
+	objectStore, err := storage.New(mediaCfg.StorageEndpoint, mediaCfg.StorageAccessKey, mediaCfg.StorageSecretKey, mediaCfg.StorageBucket, mediaCfg.StorageUseSSL)
+	if err != nil {
+		log.Fatalf("storage: %v", err)
+	}
+	libraryHandler := library.Handler{Repo: library.Repository{Pool: pool}, Storage: objectStore}
 	channels := channel.PostgresRepository{Pool: pool}
 	schedules := schedule.PostgresRepository{Pool: pool}
-	manifests := manifest.Service{Channels: channels, Assets: assets, Schedules: schedules, Cache: manifest.ManifestCache{Client: redisClient}}
+	manifests := manifest.Service{Channels: channels, Assets: assets, Schedules: schedules, Cache: manifest.ManifestCache{Client: redisClient}, Storage: objectStore}
 	playbackSigner, err := playback.NewSigner(cfg.PlaybackTokenSecret, time.Duration(cfg.PlaybackTokenTTLSeconds)*time.Second)
 	if err != nil {
 		log.Fatalf("playback configuration: %v", err)
@@ -112,6 +120,14 @@ func main() {
 			api.Use(identity.AuditMiddleware(pool))
 			api.Get("/organizations", identityHandler.ListOrganizations)
 			api.Post("/organizations", identityHandler.CreateOrganization)
+			api.Get("/tenants", libraryHandler.ListTenants)
+			api.With(auth.RequireRoles(auth.RoleAdmin)).Post("/tenants", libraryHandler.CreateTenant)
+			api.Get("/libraries", libraryHandler.List)
+			api.With(auth.RequireRoles(auth.RoleAdmin, auth.RoleEditor)).Post("/libraries", libraryHandler.Create)
+			api.Get("/storage/quota", libraryHandler.Quota)
+			api.With(auth.RequireRoles(auth.RoleAdmin)).Post("/storage/quota", libraryHandler.SetQuota)
+			api.With(auth.RequireRoles(auth.RoleAdmin, auth.RoleEditor)).Post("/libraries/{libraryID}/uploads", libraryHandler.CreateUpload)
+			api.With(auth.RequireRoles(auth.RoleAdmin, auth.RoleEditor)).Post("/uploads/{uploadID}/complete", libraryHandler.CompleteUpload)
 			api.With(auth.RequireRoles(auth.RoleAdmin)).Get("/users", identityHandler.ListUsers)
 			api.With(auth.RequireRoles(auth.RoleAdmin)).Post("/users", identityHandler.CreateUser)
 			api.With(auth.RequireRoles(auth.RoleAdmin)).Patch("/users/{userID}/role", identityHandler.UpdateUserRole)

@@ -381,6 +381,28 @@ Objetivos operacionais documentados:
 
 Esses objetivos dependem de backups externos, armazenamento durável, secret manager, automação de provisionamento e testes periódicos de restauração.
 
+## Biblioteca, quotas e conversão HLS
+
+O pipeline de mídia permite que a organização mantenha uma biblioteca compartilhada e que cada tenant tenha uma biblioteca própria com quota independente. O PostgreSQL controla metadados, reservas e consumo; o MinIO guarda objetos; o worker executa a conversão em segundo plano.
+
+```text
+upload pré-assinado → MinIO/quarantine → media_jobs → FFmpeg → HLS validado → biblioteca → grade
+```
+
+Endpoints adicionados:
+
+```text
+GET  /v1/libraries
+POST /v1/libraries
+GET  /v1/storage/quota
+POST /v1/libraries/{libraryID}/uploads
+POST /v1/uploads/{uploadID}/complete
+```
+
+O upload reserva quota antes de gerar a URL pré-assinada. Ao ser confirmado, cria um job assíncrono. O `media-worker` baixa o original do MinIO, executa FFmpeg em container, produz um master HLS com variante 720p, envia playlists/segmentos de volta ao MinIO e marca o asset como `valid`. Somente assets processados podem entrar na grade.
+
+O Compose local inclui `minio` e `media-worker`. Para produção, use bucket privado, credenciais via secret manager, limites de CPU/memória no worker e políticas de retenção para originais, temporários e HLS publicado.
+
 ## Staging e CDN
 
 O Compose de staging usa imagens imutáveis e secrets injetados pelo ambiente:
@@ -461,7 +483,8 @@ cmd/
   api/                  API HTTP principal
   playout/              Worker contínuo de playout
   scheduler/            Ponto de extensão para scheduler
-  validator/             Ponto de extensão para validação
+  validator/            Ponto de extensão para validação
+  media-worker/         Conversão assíncrona de uploads para HLS
 internal/
   asset/                Ativos HLS e persistência
   auth/                 Tokens, papéis e autorização
@@ -475,6 +498,9 @@ internal/
   observability/        Logging e middleware operacional
   playback/             URLs assinadas e proxy HLS
   playout/              Lease, fencing e estado do worker
+  library/              Tenants, bibliotecas, quotas e jobs
+  media/                Worker FFmpeg
+  storage/              Cliente S3/MinIO
   ratelimit/             Limitação por IP
   retry/                Backoff de dependências
 pkg/hls/                 Parser e renderer HLS
@@ -498,6 +524,14 @@ Endpoints administrativos principais:
 ```text
 POST   /v1/auth/bootstrap
 POST   /v1/auth/login
+GET    /v1/tenants
+POST   /v1/tenants
+GET    /v1/libraries
+POST   /v1/libraries
+GET    /v1/storage/quota
+POST   /v1/storage/quota
+POST   /v1/libraries/{libraryID}/uploads
+POST   /v1/uploads/{uploadID}/complete
 GET    /v1/users
 POST   /v1/users
 PATCH  /v1/users/{userID}/role
@@ -545,7 +579,7 @@ Antes de produção, ainda é necessário concluir e evidenciar no ambiente-alvo
 - validação do comportamento de sliding window com diferentes durações e eventos SCTE-35;
 - revisão de segurança independente antes da exposição pública.
 
-O projeto não implementa transcodificação, ingestão de arquivos, empacotamento de novas variantes, DRM, SCTE-35 completo, gravação de live input ou controle visual de grade. Esses recursos devem ser tratados como produtos separados ou extensões explícitas da arquitetura atual.
+O pipeline atual implementa ingestão de arquivo e conversão assíncrona para HLS em uma variante inicial 720p. Ainda não implementa perfis múltiplos configuráveis por organização, DRM, SCTE-35 completo, gravação de live input, limpeza automática de objetos abandonados, reconciliação periódica de quota ou controle visual de grade. Esses recursos são os próximos incrementos naturais.
 
 ## Licença e contribuição
 

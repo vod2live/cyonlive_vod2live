@@ -10,7 +10,7 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags "-X github.com/vod2live/cyonlive_vod2live/internal/buildinfo.Version=${VERSION} -X github.com/vod2live/cyonlive_vod2live/internal/buildinfo.Commit=${COMMIT} -X github.com/vod2live/cyonlive_vod2live/internal/buildinfo.BuildTime=${BUILD_TIME}" -o /out/service ./cmd/${SERVICE}
 
 FROM alpine:3.21
-RUN apk add --no-cache ca-certificates wget
+RUN apk add --no-cache ca-certificates wget ffmpeg
 COPY --from=build /out/service /service
 EXPOSE 8080
 ENTRYPOINT ["/service"]

@@ -14,6 +14,7 @@ import (
 	"github.com/vod2live/cyonlive_vod2live/internal/asset"
 	"github.com/vod2live/cyonlive_vod2live/internal/channel"
 	"github.com/vod2live/cyonlive_vod2live/internal/schedule"
+	"github.com/vod2live/cyonlive_vod2live/internal/storage"
 	"github.com/vod2live/cyonlive_vod2live/pkg/hls"
 )
 
@@ -23,6 +24,7 @@ type Service struct {
 	Schedules schedule.PostgresRepository
 	Client    *http.Client
 	Cache     ManifestCache
+	Storage   *storage.Client
 }
 
 func (s Service) client() *http.Client {
@@ -32,6 +34,17 @@ func (s Service) client() *http.Client {
 	return &http.Client{Timeout: 15 * time.Second}
 }
 func (s Service) fetch(ctx context.Context, raw string) (string, error) {
+	if strings.HasPrefix(raw, "s3://") {
+		_, key, err := storage.ParseURI(raw)
+		if err != nil || s.Storage == nil {
+			return "", fmt.Errorf("storage source unavailable")
+		}
+		presigned, err := s.Storage.PresignedGet(ctx, key, 2*time.Minute)
+		if err != nil {
+			return "", err
+		}
+		raw = presigned.String()
+	}
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, raw, nil)
 	resp, err := s.client().Do(req)
 	if err != nil {
@@ -160,6 +173,13 @@ func (s Service) Media(ctx context.Context, channelID uuid.UUID, variant string,
 		for j := start; j < len(media.Segments) && total < 12; j++ {
 			seg := media.Segments[j]
 			seg.URI = hls.Resolve(mediaURL, seg.URI)
+			if strings.HasPrefix(seg.URI, "s3://") && s.Storage != nil {
+				if _, key, parseErr := storage.ParseURI(seg.URI); parseErr == nil {
+					if signed, signErr := s.Storage.PresignedGet(ctx, key, 10*time.Minute); signErr == nil {
+						seg.URI = signed.String()
+					}
+				}
+			}
 			if len(out.Segments) > 0 && j == start {
 				seg.Discontinuity = true
 			}
