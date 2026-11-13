@@ -20,6 +20,7 @@ const (
 	OperationControlChannels Operation = "control_channels"
 	OperationIssuePlayback   Operation = "issue_playback"
 	OperationWriteSchedule   Operation = "write_schedule"
+	OperationReprocessMedia  Operation = "reprocess_media"
 )
 
 var operationRoles = map[Operation][]string{
@@ -35,6 +36,7 @@ var operationRoles = map[Operation][]string{
 	OperationControlChannels: {RoleAdmin, RoleOperator},
 	OperationIssuePlayback:   {RoleAdmin, RoleOperator},
 	OperationWriteSchedule:   {RoleAdmin, RoleEditor},
+	OperationReprocessMedia:  {RoleAdmin, RoleOperator},
 }
 
 // RolesForOperation returns a copy so callers cannot mutate the policy.

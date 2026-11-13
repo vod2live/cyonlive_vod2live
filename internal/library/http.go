@@ -3,6 +3,7 @@ package library
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -342,6 +343,33 @@ func (h Handler) JobStats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	write(w, http.StatusOK, stats)
+}
+
+func (h Handler) ReprocessDeadJob(w http.ResponseWriter, r *http.Request) {
+	p, ok := auth.PrincipalFrom(r.Context())
+	if !ok {
+		http.Error(w, "não autorizado", http.StatusUnauthorized)
+		return
+	}
+	id, err := uuid.Parse(chi.URLParam(r, "jobID"))
+	if err != nil {
+		http.Error(w, "job_id inválido", http.StatusBadRequest)
+		return
+	}
+	job, err := h.Repo.ReprocessDeadJob(r.Context(), p.OrganizationID, p.UserID, id)
+	if errors.Is(err, ErrJobNotDead) {
+		http.Error(w, "job não está em estado dead", http.StatusConflict)
+		return
+	}
+	if errors.Is(err, ErrJobNotFound) {
+		http.Error(w, "job não encontrado", http.StatusNotFound)
+		return
+	}
+	if err != nil {
+		http.Error(w, "erro ao reprocessar job", http.StatusInternalServerError)
+		return
+	}
+	write(w, http.StatusOK, job)
 }
 
 func (h Handler) CompleteUpload(w http.ResponseWriter, r *http.Request) {

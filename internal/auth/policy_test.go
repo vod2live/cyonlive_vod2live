@@ -24,6 +24,7 @@ func TestAuthorizationPolicyMatrix(t *testing.T) {
 		{OperationControlChannels, []string{RoleAdmin, RoleOperator}},
 		{OperationIssuePlayback, []string{RoleAdmin, RoleOperator}},
 		{OperationWriteSchedule, []string{RoleAdmin, RoleEditor}},
+		{OperationReprocessMedia, []string{RoleAdmin, RoleOperator}},
 	}
 
 	for _, tt := range tests {
@@ -57,6 +58,8 @@ func TestRequireOperationEnforcesMatrix(t *testing.T) {
 		{OperationWriteLibraries, RoleOperator, http.StatusForbidden},
 		{OperationControlChannels, RoleOperator, http.StatusNoContent},
 		{OperationControlChannels, RoleViewer, http.StatusForbidden},
+		{OperationReprocessMedia, RoleOperator, http.StatusNoContent},
+		{OperationReprocessMedia, RoleEditor, http.StatusForbidden},
 	} {
 		t.Run(string(tt.operation)+"/"+tt.role, func(t *testing.T) {
 			next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

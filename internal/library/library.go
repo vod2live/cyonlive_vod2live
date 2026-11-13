@@ -2,6 +2,7 @@ package library
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -12,6 +13,11 @@ import (
 )
 
 type Repository struct{ Pool *pgxpool.Pool }
+
+var (
+	ErrJobNotFound = errors.New("media job not found")
+	ErrJobNotDead  = errors.New("media job is not dead")
+)
 
 const MaxUploadBytes int64 = 20 << 30
 
@@ -241,6 +247,65 @@ func (r Repository) JobStats(ctx context.Context, org uuid.UUID, tenant *uuid.UU
 		FROM media_jobs WHERE organization_id=$1 AND tenant_id IS NOT DISTINCT FROM COALESCE($2,tenant_id)`, org, tenant).
 		Scan(&stats.Queued, &stats.Processing, &stats.Completed, &stats.Failed, &stats.Dead)
 	return stats, err
+}
+
+type ReprocessedJob struct {
+	ID           uuid.UUID  `json:"id"`
+	TenantID     *uuid.UUID `json:"tenant_id,omitempty"`
+	Status       string     `json:"status"`
+	Attempts     int        `json:"attempts"`
+	MaxAttempts  int        `json:"max_attempts"`
+	LastError    string     `json:"last_error"`
+}
+
+// ReprocessDeadJob requeues only a dead job visible to the operator. Attempts
+// remain cumulative; max_attempts is extended by five so the worker receives a
+// fresh retry budget without erasing the previous failure history.
+func (r Repository) ReprocessDeadJob(ctx context.Context, organizationID, userID, jobID uuid.UUID) (ReprocessedJob, error) {
+	tx, err := r.Pool.Begin(ctx)
+	if err != nil {
+		return ReprocessedJob{}, err
+	}
+	defer tx.Rollback(ctx)
+	var status string
+	var tenantIDValue uuid.UUID
+	err = tx.QueryRow(ctx, `SELECT status,COALESCE(tenant_id,'00000000-0000-0000-0000-000000000000') FROM media_jobs WHERE id=$1 AND organization_id=$2 FOR UPDATE`, jobID, organizationID).Scan(&status, &tenantIDValue)
+	if err == pgx.ErrNoRows {
+		return ReprocessedJob{}, ErrJobNotFound
+	}
+	if err != nil {
+		return ReprocessedJob{}, err
+	}
+	if status != "dead" {
+		return ReprocessedJob{}, ErrJobNotDead
+	}
+	if tenantIDValue != uuid.Nil {
+		var allowed bool
+		if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM tenant_memberships WHERE tenant_id=$1 AND organization_id=$2 AND user_id=$3)`, tenantIDValue, organizationID, userID).Scan(&allowed); err != nil {
+			return ReprocessedJob{}, err
+		}
+		if !allowed {
+			return ReprocessedJob{}, ErrJobNotFound
+		}
+	}
+	var job ReprocessedJob
+	var sourceObjectID uuid.UUID
+	var reprocessedTenantID uuid.UUID
+	err = tx.QueryRow(ctx, `UPDATE media_jobs SET status='queued',max_attempts=attempts+5,progress_percent=0,error_message='',completed_at=NULL,locked_at=NULL,lease_until=NULL,updated_at=now() WHERE id=$1 AND status='dead' RETURNING id,COALESCE(tenant_id,'00000000-0000-0000-0000-000000000000'),status,attempts,max_attempts,last_error,source_object_id`, jobID).
+		Scan(&job.ID, &reprocessedTenantID, &job.Status, &job.Attempts, &job.MaxAttempts, &job.LastError, &sourceObjectID)
+	if err != nil {
+		return ReprocessedJob{}, err
+	}
+	if reprocessedTenantID != uuid.Nil {
+		job.TenantID = &reprocessedTenantID
+	}
+	if _, err = tx.Exec(ctx, `UPDATE storage_objects SET status='uploaded',updated_at=now() WHERE id=$1`, sourceObjectID); err != nil {
+		return ReprocessedJob{}, err
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return ReprocessedJob{}, err
+	}
+	return job, nil
 }
 
 func (r Repository) ClaimJob(ctx context.Context) (Job, error) {

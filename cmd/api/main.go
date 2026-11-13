@@ -127,6 +127,7 @@ func main() {
 			api.Get("/libraries", libraryHandler.List)
 			api.Get("/uploads", libraryHandler.ListUploads)
 			api.Get("/media/jobs", libraryHandler.JobStats)
+			api.With(auth.RequireOperation(auth.OperationReprocessMedia)).Post("/media/jobs/{jobID}/reprocess", libraryHandler.ReprocessDeadJob)
 			api.With(auth.RequireOperation(auth.OperationWriteLibraries)).Post("/libraries", libraryHandler.Create)
 			api.Get("/storage/quota", libraryHandler.Quota)
 			api.With(auth.RequireOperation(auth.OperationWriteQuota)).Post("/storage/quota", libraryHandler.SetQuota)

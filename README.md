@@ -236,6 +236,7 @@ As permissões de escrita são definidas em uma política declarativa por opera�
 | Criar canais | sim | sim | não | não |
 | Iniciar/parar canais e emitir playback | sim | não | sim | não |
 | Criar, alterar e remover programação | sim | sim | não | não |
+| Reprocessar jobs de mídia `dead` | sim | não | sim | não |
 
 Leituras são permitidas somente quando o recurso pertence à organização e, para recursos privados, quando o usuário está associado ao tenant. Um administrador organizacional não recebe acesso automático a um tenant privado sem essa associação. Alterações de papel ou remoção de associação são reavaliadas na próxima requisição e têm efeito imediato.
 
@@ -381,6 +382,8 @@ Configuração e alertas:
 
 O endpoint `/metrics` deve ser restringido por rede, ingress ou autenticação do sistema de monitoramento em produção.
 
+Jobs em estado `dead` podem ser reprocessados por administrador ou operador através de `POST /v1/media/jobs/{jobID}/reprocess`. A operação exige o mesmo escopo de organização e tenant, restaura o objeto de origem para `uploaded`, preserva `attempts` e `last_error` e acrescenta cinco tentativas ao orçamento do worker.
+
 ## Banco, backup e recuperação
 
 O PostgreSQL é a fonte persistente do sistema. Redis contém estado derivado, cache e locks; sua perda não deve destruir a configuração ou a grade, mas exige reaquisição dos leases pelos workers.
@@ -429,8 +432,9 @@ Endpoints adicionados:
 GET  /v1/libraries
 POST /v1/libraries
 GET  /v1/storage/quota
-GET  /v1/media/jobs?tenant_id={tenantID}
-GET  /v1/uploads?library_id={libraryID}
+GET    /v1/media/jobs?tenant_id={tenantID}
+POST   /v1/media/jobs/{jobID}/reprocess
+GET    /v1/uploads?library_id={libraryID}
 POST /v1/libraries/{libraryID}/uploads
 POST /v1/uploads/{uploadID}/complete
 GET  /v1/review/assets
