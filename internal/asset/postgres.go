@@ -58,6 +58,36 @@ func (r PostgresRepository) ListAwaitingReview(ctx context.Context, organization
 	return result, rows.Err()
 }
 
+// ListAwaitingReviewForUser applies tenant visibility in the same query that
+// loads the review queue, avoiding one access check per asset in the handler.
+func (r PostgresRepository) ListAwaitingReviewForUser(ctx context.Context, userID, organizationID uuid.UUID) ([]Asset, error) {
+	rows, err := r.Pool.Query(ctx, `SELECT a.id,a.organization_id,a.library_id,a.tenant_id,a.title,a.hls_url,a.status,a.approval_status,COALESCE(a.duration_ms,0),a.metadata
+		FROM assets a
+		WHERE a.organization_id=$1 AND a.library_id IS NOT NULL AND a.status='valid' AND a.approval_status='pending'
+		AND (a.tenant_id IS NULL OR EXISTS (
+			SELECT 1 FROM tenant_memberships tm
+			WHERE tm.tenant_id=a.tenant_id AND tm.organization_id=a.organization_id AND tm.user_id=$2
+		))
+		ORDER BY a.created_at LIMIT 200`, organizationID, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var result []Asset
+	for rows.Next() {
+		var item Asset
+		var raw []byte
+		if err := rows.Scan(&item.ID, &item.OrganizationID, &item.LibraryID, &item.TenantID, &item.Title, &item.HLSURL, &item.Status, &item.ApprovalStatus, &item.DurationMS, &raw); err != nil {
+			return nil, err
+		}
+		if len(raw) > 0 {
+			_ = json.Unmarshal(raw, &item.Metadata)
+		}
+		result = append(result, item)
+	}
+	return result, rows.Err()
+}
+
 func (r PostgresRepository) find(ctx context.Context, query string, args ...any) (Asset, error) {
 	var item Asset
 	var raw []byte

@@ -142,13 +142,13 @@ func main() {
 			api.With(auth.RequireOperation(auth.OperationManageTeams)).Delete("/teams/{teamID}/members/{userID}", identityHandler.RemoveTeamMember)
 
 			api.With(auth.RequireOperation(auth.OperationWriteAssets)).Post("/assets", createAsset(assets))
-			api.With(auth.RequireOperation(auth.OperationReviewAssets)).Get("/review/assets", reviewQueue(assets, identities))
+			api.With(auth.RequireOperation(auth.OperationReviewAssets)).Get("/review/assets", reviewQueue(assets))
 			api.With(auth.RequireOperation(auth.OperationReviewAssets)).Post("/assets/{id}/review", reviewAsset(assets, identities))
 			api.With(auth.RequireOperation(auth.OperationReviewAssets)).Get("/assets/{id}/review/history", reviewHistory(assets, identities))
 			api.Get("/assets/{id}", getAsset(assets, identities))
 			api.With(auth.RequireOperation(auth.OperationValidateAssets)).Post("/assets/{id}/validate", validateAsset(assets, identities))
 			api.With(auth.RequireOperation(auth.OperationWriteChannels)).Post("/channels", createChannel(channels, identities))
-			api.Get("/channels", listChannels(channels, identities))
+			api.Get("/channels", listChannels(channels))
 			api.Get("/channels/{id}", getChannel(channels, identities))
 			api.With(auth.RequireOperation(auth.OperationControlChannels)).Post("/channels/{id}/start", updateChannelStatus(channels, identities, "running"))
 			api.With(auth.RequireOperation(auth.OperationControlChannels)).Post("/channels/{id}/stop", updateChannelStatus(channels, identities, "stopped"))
@@ -263,25 +263,19 @@ func validateAsset(repo asset.PostgresRepository, access identity.Repository) ht
 	}
 }
 
-func reviewQueue(repo asset.PostgresRepository, access identity.Repository) http.HandlerFunc {
+func reviewQueue(repo asset.PostgresRepository) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		principal, ok := auth.PrincipalFrom(r.Context())
 		if !ok {
 			http.Error(w, "não autorizado", http.StatusUnauthorized)
 			return
 		}
-		items, err := repo.ListAwaitingReview(r.Context(), principal.OrganizationID)
+			items, err := repo.ListAwaitingReviewForUser(r.Context(), principal.UserID, principal.OrganizationID)
 		if err != nil {
 			http.Error(w, "erro ao consultar fila de revisão", http.StatusInternalServerError)
 			return
 		}
-		filtered := items[:0]
-		for _, item := range items {
-			if allowed, accessErr := access.UserCanAccessAsset(r.Context(), principal.UserID, principal.OrganizationID, item.ID); accessErr == nil && allowed {
-				filtered = append(filtered, item)
-			}
-		}
-		writeJSON(w, http.StatusOK, filtered)
+			writeJSON(w, http.StatusOK, items)
 	}
 }
 
@@ -412,30 +406,19 @@ func checkChannelAccess(w http.ResponseWriter, r *http.Request, access identity.
 	return true
 }
 
-func listChannels(repo channel.PostgresRepository, access identity.Repository) http.HandlerFunc {
+func listChannels(repo channel.PostgresRepository) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		principal, ok := auth.PrincipalFrom(r.Context())
 		if !ok {
 			http.Error(w, "não autorizado", http.StatusUnauthorized)
 			return
 		}
-		items, err := repo.ListInOrg(r.Context(), principal.OrganizationID)
+			items, err := repo.ListVisibleToUser(r.Context(), principal.UserID, principal.OrganizationID)
 		if err != nil {
 			http.Error(w, "erro ao listar canais", 500)
 			return
 		}
-		filtered := items[:0]
-		for _, item := range items {
-			allowed, accessErr := access.UserCanAccessChannel(r.Context(), principal.UserID, principal.OrganizationID, item.ID)
-			if accessErr != nil {
-				http.Error(w, "falha ao validar acesso aos canais", http.StatusInternalServerError)
-				return
-			}
-			if allowed {
-				filtered = append(filtered, item)
-			}
-		}
-		writeJSON(w, 200, filtered)
+			writeJSON(w, 200, items)
 	}
 }
 func getChannel(repo channel.PostgresRepository, access identity.Repository) http.HandlerFunc {

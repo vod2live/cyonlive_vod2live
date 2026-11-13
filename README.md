@@ -257,6 +257,8 @@ Operações com `tenant_id` exigem associação explícita do usuário em `tenan
 
 Administradores gerenciam as associações por tenant através de `POST /v1/tenants/{tenantID}/members` e `DELETE /v1/tenants/{tenantID}/members/{userID}`. Consultas de asset, canal, programação, manifest e playback também revalidam o escopo do usuário, e não dependem somente do `organization_id` do token.
 
+As listagens de canais e a fila de revisão aplicam o escopo de tenant diretamente no PostgreSQL com `EXISTS` em `tenant_memberships`. Isso evita carregar recursos da organização e executar uma consulta de autorização para cada item retornado.
+
 Operações de escrita autenticadas registram ator, organização, ação, recurso, status HTTP e request ID na tabela de auditoria.
 
 ## Ingestão HLS e SSRF
