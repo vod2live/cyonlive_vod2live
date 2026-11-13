@@ -409,7 +409,7 @@ As migrações são reaplicáveis e podem ser verificadas com:
 make verify-migrations
 ```
 
-Em ambientes persistentes, use `make migrate`. O executor adquire um advisory lock no PostgreSQL, aplica os arquivos em ordem lexicográfica, registra a versão e o SHA-256 em `schema_migrations` e interrompe a execução se um arquivo já aplicado tiver sido alterado.
+Em ambientes persistentes, use `make migrate`. O executor mantém o advisory lock na mesma sessão PostgreSQL, aplica os arquivos em ordem lexicográfica, registra a versão e o SHA-256 em `schema_migrations` e interrompe a execução se um arquivo já aplicado tiver sido alterado. Para staging, injete `DATABASE_URL` pelo secret manager e execute `docker compose --env-file deployments/staging/.env -f deployments/staging/docker-compose.staging.yml --profile tools run --rm migration-runner` antes de promover os serviços; o CI também aplica as migrações antes de iniciar API e playout.
 
 O runbook de recuperação, RPO/RTO e rollback está em [`deployments/staging/RUNBOOK.md`](deployments/staging/RUNBOOK.md).
 
@@ -443,6 +443,8 @@ GET  /v1/review/assets
 POST /v1/assets/{id}/review
 GET  /v1/assets/{id}/review/history
 ```
+
+`GET /v1/channels` e `GET /v1/review/assets` aceitam `limit` e `offset` (por exemplo, `?limit=50&offset=0`). O padrão é 50 itens por página, o máximo é 200 e valores inválidos retornam HTTP 400. A resposta continua sendo um array; o filtro de tenant permanece aplicado no SQL antes da paginação.
 
 O upload reserva quota antes de gerar a URL pré-assinada. Ao ser confirmado, cria um job assíncrono. O `media-worker` baixa o original do MinIO, executa FFmpeg em container, produz um master HLS com variante 720p e envia playlists/segmentos de volta ao MinIO. A conversão bem-sucedida marca o asset como tecnicamente `valid`, mas seu estado editorial permanece `pending`; ele não pode ser agendado até que um administrador/editor o aprove pela fila de revisão. A decisão e o revisor ficam registrados; rejeições desabilitam itens de grade existentes. A verificação é feita no backend ao criar/reativar programação e ao consultar a grade usada pelo manifest.
 

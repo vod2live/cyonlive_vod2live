@@ -52,11 +52,9 @@ func (r PostgresRepository) ListInOrg(ctx context.Context, organizationID uuid.U
 	return r.list(ctx, `SELECT id,organization_id,tenant_id,name,slug,status,loop_enabled FROM channels WHERE organization_id=$1 ORDER BY name`, organizationID)
 }
 
-// ListVisibleToUser returns organization-wide channels and channels belonging
-// to a tenant in which the user has an explicit membership. The scope is
-// enforced in SQL so HTTP list endpoints do not perform one authorization
-// query per returned channel.
-func (r PostgresRepository) ListVisibleToUser(ctx context.Context, userID, organizationID uuid.UUID) ([]Channel, error) {
+// ListVisibleToUser returns a stable page of organization-wide and tenant
+// channels visible to the user. Visibility is enforced in SQL.
+func (r PostgresRepository) ListVisibleToUser(ctx context.Context, userID, organizationID uuid.UUID, limit, offset int) ([]Channel, error) {
 	return r.list(ctx, `SELECT c.id,c.organization_id,c.tenant_id,c.name,c.slug,c.status,c.loop_enabled
 		FROM channels c
 		WHERE c.organization_id=$1
@@ -64,7 +62,7 @@ func (r PostgresRepository) ListVisibleToUser(ctx context.Context, userID, organ
 			SELECT 1 FROM tenant_memberships tm
 			WHERE tm.tenant_id=c.tenant_id AND tm.organization_id=c.organization_id AND tm.user_id=$2
 		))
-		ORDER BY c.name`, organizationID, userID)
+		ORDER BY c.name,c.id LIMIT $3 OFFSET $4`, organizationID, userID, limit, offset)
 }
 
 func (r PostgresRepository) list(ctx context.Context, query string, args ...any) ([]Channel, error) {

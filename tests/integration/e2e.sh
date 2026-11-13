@@ -55,12 +55,19 @@ curl --fail --silent -X DELETE "$BASE_URL/v1/schedule/$item_id" -H "$AUTH_HEADER
 
 viewer=$(curl --fail --silent -X POST "$BASE_URL/v1/users" -H "$AUTH_HEADER" -H 'Content-Type: application/json' -d '{"email":"viewer@example.com","password":"viewer-phase14-password","role":"visualizador"}')
 viewer_id=$(printf '%s' "$viewer" | json_value id)
+tenant_a_private_channel=$(curl --fail --silent -X POST "$BASE_URL/v1/channels" -H "$AUTH_HEADER" -H 'Content-Type: application/json' -d "{\"name\":\"Canal privado Tenant A\",\"tenant_id\":\"$tenant_a_id\"}")
+tenant_a_private_channel_id=$(printf '%s' "$tenant_a_private_channel" | json_value id)
+curl --fail --silent -X POST "$BASE_URL/v1/tenants/$tenant_a_id/members" -H "$AUTH_HEADER" -H 'Content-Type: application/json' -d "{\"user_id\":\"$viewer_id\",\"role\":\"visualizador\"}" >/dev/null
 team=$(curl --fail --silent -X POST "$BASE_URL/v1/teams" -H "$AUTH_HEADER" -H 'Content-Type: application/json' -d '{"name":"Operações E2E"}')
 team_id=$(printf '%s' "$team" | json_value id)
 curl --fail --silent -X POST "$BASE_URL/v1/teams/$team_id/members" -H "$AUTH_HEADER" -H 'Content-Type: application/json' -d "{\"user_id\":\"$viewer_id\"}" >/dev/null
 viewer_login=$(curl --fail --silent -X POST "$BASE_URL/v1/auth/login" -H 'Content-Type: application/json' -d '{"email":"viewer@example.com","password":"viewer-phase14-password"}')
 VIEWER_TOKEN=$(printf '%s' "$viewer_login" | json_value access_token)
+curl --fail --silent "$BASE_URL/v1/channels/$tenant_a_private_channel_id" -H "Authorization: Bearer $VIEWER_TOKEN" | grep -q "\"tenant_id\":\"$tenant_a_id\""
 if [ "$(curl --silent --output /dev/null --write-out '%{http_code}' -X POST "$BASE_URL/v1/channels" -H "Authorization: Bearer $VIEWER_TOKEN" -H 'Content-Type: application/json' -d '{"name":"Negado"}')" != "403" ]; then echo 'visualizador conseguiu criar canal' >&2; exit 1; fi
+if [ "$(curl --silent --output /dev/null --write-out '%{http_code}' -X POST "$BASE_URL/v1/channels" -H "Authorization: Bearer $VIEWER_TOKEN" -H 'Content-Type: application/json' -d "{\"name\":\"Canal visualizador negado\",\"tenant_id\":\"$tenant_a_id\"}")" != "403" ]; then echo 'visualizador conseguiu criar canal no tenant associado' >&2; exit 1; fi
+curl --fail --silent -X DELETE "$BASE_URL/v1/tenants/$tenant_a_id/members/$viewer_id" -H "$AUTH_HEADER" >/dev/null
+if [ "$(curl --silent --output /dev/null --write-out '%{http_code}' "$BASE_URL/v1/channels/$tenant_a_private_channel_id" -H "Authorization: Bearer $VIEWER_TOKEN")" != "404" ]; then echo 'remoção da associação não revogou o acesso ao tenant' >&2; exit 1; fi
 
 other_org=$(curl --fail --silent -X POST "$BASE_URL/v1/organizations" -H "$AUTH_HEADER" -H 'Content-Type: application/json' -d '{"name":"Outra organização E2E","slug":"outra-organizacao-e2e"}')
 other_org_id=$(printf '%s' "$other_org" | json_value id)

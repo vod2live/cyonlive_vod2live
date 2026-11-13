@@ -41,8 +41,12 @@ paths:
   /v1/review/assets:
     get:
       summary: Listar assets processados aguardando revisão editorial
+      parameters:
+        - { $ref: '#/components/parameters/PageLimit' }
+        - { $ref: '#/components/parameters/PageOffset' }
       responses:
         '200': { description: Fila da organização ativa }
+        '400': { description: Parâmetros de paginação inválidos }
   /v1/assets/{id}/review:
     post:
       summary: Aprovar ou rejeitar um asset processado
@@ -71,7 +75,12 @@ paths:
       responses: { '201': { description: Canal criado } }
     get:
       summary: Listar canais
-      responses: { '200': { description: Lista de canais } }
+      parameters:
+        - { $ref: '#/components/parameters/PageLimit' }
+        - { $ref: '#/components/parameters/PageOffset' }
+      responses:
+        '200': { description: Lista paginada de canais visíveis }
+        '400': { description: Parâmetros de paginação inválidos }
   /v1/channels/{id}/start:
     post:
       summary: Iniciar playout do canal
@@ -343,6 +352,16 @@ components:
       in: path
       required: true
       schema: { type: string, format: uuid }
+    PageLimit:
+      name: limit
+      in: query
+      required: false
+      schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+    PageOffset:
+      name: offset
+      in: query
+      required: false
+      schema: { type: integer, minimum: 0, default: 0 }
     PlaybackExpires:
       name: expires
       in: query

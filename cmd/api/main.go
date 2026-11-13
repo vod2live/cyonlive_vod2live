@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -264,6 +265,27 @@ func validateAsset(repo asset.PostgresRepository, access identity.Repository) ht
 	}
 }
 
+const defaultPageSize = 50
+const maxPageSize = 200
+
+func parsePagination(r *http.Request) (limit, offset int, err error) {
+	limit, offset = defaultPageSize, 0
+	query := r.URL.Query()
+	if raw := query.Get("limit"); raw != "" {
+		limit, err = strconv.Atoi(raw)
+		if err != nil || limit < 1 || limit > maxPageSize {
+			return 0, 0, fmt.Errorf("limit deve estar entre 1 e %d", maxPageSize)
+		}
+	}
+	if raw := query.Get("offset"); raw != "" {
+		offset, err = strconv.Atoi(raw)
+		if err != nil || offset < 0 {
+			return 0, 0, fmt.Errorf("offset deve ser um inteiro não negativo")
+		}
+	}
+	return limit, offset, nil
+}
+
 func reviewQueue(repo asset.PostgresRepository) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		principal, ok := auth.PrincipalFrom(r.Context())
@@ -271,12 +293,17 @@ func reviewQueue(repo asset.PostgresRepository) http.HandlerFunc {
 			http.Error(w, "não autorizado", http.StatusUnauthorized)
 			return
 		}
-			items, err := repo.ListAwaitingReviewForUser(r.Context(), principal.UserID, principal.OrganizationID)
+		limit, offset, err := parsePagination(r)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		items, err := repo.ListAwaitingReviewForUser(r.Context(), principal.UserID, principal.OrganizationID, limit, offset)
 		if err != nil {
 			http.Error(w, "erro ao consultar fila de revisão", http.StatusInternalServerError)
 			return
 		}
-			writeJSON(w, http.StatusOK, items)
+		writeJSON(w, http.StatusOK, items)
 	}
 }
 
@@ -414,12 +441,17 @@ func listChannels(repo channel.PostgresRepository) http.HandlerFunc {
 			http.Error(w, "não autorizado", http.StatusUnauthorized)
 			return
 		}
-			items, err := repo.ListVisibleToUser(r.Context(), principal.UserID, principal.OrganizationID)
+		limit, offset, err := parsePagination(r)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		items, err := repo.ListVisibleToUser(r.Context(), principal.UserID, principal.OrganizationID, limit, offset)
 		if err != nil {
 			http.Error(w, "erro ao listar canais", 500)
 			return
 		}
-			writeJSON(w, 200, items)
+		writeJSON(w, 200, items)
 	}
 }
 func getChannel(repo channel.PostgresRepository, access identity.Repository) http.HandlerFunc {

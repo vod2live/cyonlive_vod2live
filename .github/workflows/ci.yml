@@ -16,8 +16,13 @@ jobs:
           go-version: '1.22'
       - run: go test ./...
       - run: docker compose config --quiet
+      - run: IMAGE_TAG=ci DATABASE_URL='postgres://test:test@db:5432/test' REDIS_ADDR=redis:6379 API_KEY=test AUTH_TOKEN_SECRET=test PLAYBACK_TOKEN_SECRET=test CORS_ALLOWED_ORIGIN=https://example.test MINIO_ENDPOINT=minio:9000 MINIO_ROOT_USER=test MINIO_ROOT_PASSWORD=test docker compose -f docker-compose.yml -f deployments/staging/docker-compose.staging.yml config --quiet
       - run: VERSION=${GITHUB_REF_NAME} COMMIT=${GITHUB_SHA} BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ) docker compose build api playout
-      - run: docker compose up -d postgres redis hls-fixture api playout
+      - run: docker compose up -d --wait --wait-timeout 120 postgres redis hls-fixture
+      - run: ./scripts/verify-migrations.sh
+      - run: VOD2LIVE_TEST_DATABASE_URL='postgres://vod2live:vod2live@localhost:5432/vod2live?sslmode=disable' go test ./internal/library -run '^TestClaimJobConcurrentWorkersClaimJobOnce$' -count=1
+      - run: docker compose up -d --wait --wait-timeout 120 api playout
+      - run: VOD2LIVE_TEST_DATABASE_URL='postgres://vod2live:vod2live@localhost:5432/vod2live?sslmode=disable' VOD2LIVE_TEST_MINIO_ENDPOINT='localhost:9000' go test ./internal/media -run '^TestWorkerFailurePersistsDeadJobAndObjectState$' -count=1
       - run: ./tests/integration/e2e.sh
       - run: ./tests/integration/contract.sh
       - run: ./scripts/ha-smoke.sh
@@ -27,6 +32,6 @@ jobs:
       - run: mkdir -p /tmp/vod2live-ci && docker compose exec -T postgres pg_dump -Fc -U vod2live -d vod2live > /tmp/vod2live-ci/database.dump
       - run: test -s /tmp/vod2live-ci/database.dump && docker compose run --rm -T --no-deps postgres pg_restore --list < /tmp/vod2live-ci/database.dump
       - if: always()
-        run: docker compose logs --no-color
+        run: docker compose ps --all && docker compose logs --no-color
       - if: always()
         run: docker compose down -v

@@ -44,3 +44,14 @@ services:
       MEDIA_ABANDONED_UPLOAD_TTL_HOURS: ${MEDIA_ABANDONED_UPLOAD_TTL_HOURS:-24}
       MEDIA_CLEANUP_INTERVAL_SECONDS: ${MEDIA_CLEANUP_INTERVAL_SECONDS:-900}
     restart: unless-stopped
+
+  migration-runner:
+    image: postgres:16-alpine
+    profiles: ["tools"]
+    working_dir: /app
+    entrypoint: ["/bin/sh", "/app/scripts/migrate.sh"]
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
+    volumes:
+      - ../../migrations:/app/migrations:ro
+      - ../../scripts/migrate.sh:/app/scripts/migrate.sh:ro

@@ -36,7 +36,7 @@ func TestAuthorizationPolicyMatrix(t *testing.T) {
 			for i := range tt.allowed {
 				if got[i] != tt.allowed[i] {
 					t.Fatalf("roles = %v, want %v", got, tt.allowed)
-			}
+				}
 			}
 			got[0] = "mutated"
 			if RolesForOperation(tt.operation)[0] == "mutated" {
@@ -47,32 +47,45 @@ func TestAuthorizationPolicyMatrix(t *testing.T) {
 }
 
 func TestRequireOperationEnforcesMatrix(t *testing.T) {
-	for _, tt := range []struct {
-		operation Operation
-		role      string
-		want      int
-	}{
-		{OperationManageTenants, RoleAdmin, http.StatusNoContent},
-		{OperationManageTenants, RoleEditor, http.StatusForbidden},
-		{OperationWriteLibraries, RoleEditor, http.StatusNoContent},
-		{OperationWriteLibraries, RoleOperator, http.StatusForbidden},
-		{OperationControlChannels, RoleOperator, http.StatusNoContent},
-		{OperationControlChannels, RoleViewer, http.StatusForbidden},
-		{OperationReprocessMedia, RoleOperator, http.StatusNoContent},
-		{OperationReprocessMedia, RoleEditor, http.StatusForbidden},
-	} {
-		t.Run(string(tt.operation)+"/"+tt.role, func(t *testing.T) {
-			next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				w.WriteHeader(http.StatusNoContent)
-			})
-			req := httptest.NewRequest(http.MethodPost, "/v1/test", nil)
-			req = req.WithContext(withPrincipal(req.Context(), Principal{Role: tt.role}))
-			res := httptest.NewRecorder()
-			RequireOperation(tt.operation)(next).ServeHTTP(res, req)
-			if res.Code != tt.want {
-				t.Fatalf("status = %d, want %d", res.Code, tt.want)
+	operations := []Operation{
+		OperationManageTenants,
+		OperationWriteLibraries,
+		OperationWriteQuota,
+		OperationManageUsers,
+		OperationManageTeams,
+		OperationWriteAssets,
+		OperationReviewAssets,
+		OperationValidateAssets,
+		OperationWriteChannels,
+		OperationControlChannels,
+		OperationIssuePlayback,
+		OperationWriteSchedule,
+		OperationReprocessMedia,
+	}
+	roles := []string{RoleAdmin, RoleEditor, RoleOperator, RoleViewer}
+	for _, operation := range operations {
+		allowed := make(map[string]bool)
+		for _, role := range RolesForOperation(operation) {
+			allowed[role] = true
+		}
+		for _, role := range roles {
+			want := http.StatusForbidden
+			if allowed[role] {
+				want = http.StatusNoContent
 			}
-		})
+			t.Run(string(operation)+"/"+role, func(t *testing.T) {
+				next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+					w.WriteHeader(http.StatusNoContent)
+				})
+				req := httptest.NewRequest(http.MethodPost, "/v1/test", nil)
+				req = req.WithContext(withPrincipal(req.Context(), Principal{Role: role}))
+				res := httptest.NewRecorder()
+				RequireOperation(operation)(next).ServeHTTP(res, req)
+				if res.Code != want {
+					t.Fatalf("status = %d, want %d", res.Code, want)
+				}
+			})
+		}
 	}
 }
 
