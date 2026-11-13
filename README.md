@@ -356,6 +356,8 @@ GET /metrics
 GET /version
 ```
 
+O `media-worker` expõe `GET /metrics` em `MEDIA_METRICS_ADDR` (padrão `:9091`). O endpoint registra jobs concluídos e falhos, duração do processamento por resultado e o estado atual (`starting`, `idle`, `processing`, `stopping` ou `failed`). O Compose e o Prometheus já incluem esse alvo separado da API.
+
 O logging usa JSON estruturado via `slog` e inclui método, caminho, status, duração e `X-Request-ID`.
 
 As métricas Prometheus incluem:
@@ -364,6 +366,9 @@ As métricas Prometheus incluem:
 - `vod2live_http_errors_total`;
 - `vod2live_http_requests_by_status_total`;
 - `vod2live_http_request_duration_seconds`;
+- `vod2live_media_jobs_total{status="completed|failed"}`;
+- `vod2live_media_job_duration_seconds`;
+- `vod2live_media_worker_state{state="..."}`;
 - `vod2live_auth_failures_total`;
 - `vod2live_manifest_requests_total`;
 - `vod2live_ready`;

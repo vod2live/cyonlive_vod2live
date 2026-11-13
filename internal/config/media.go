@@ -13,6 +13,7 @@ type MediaConfig struct {
 	FFmpegPath       string
 	MediaPollSeconds int
 	KeepOriginal     bool
+	MetricsAddr      string
 }
 
 func LoadMedia() MediaConfig {
@@ -27,6 +28,7 @@ func LoadMedia() MediaConfig {
 		FFmpegPath:       env("FFMPEG_PATH", "ffmpeg"),
 		MediaPollSeconds: intEnv("MEDIA_POLL_SECONDS", 5),
 		KeepOriginal:     boolEnv("MEDIA_KEEP_ORIGINAL", false),
+		MetricsAddr:      env("MEDIA_METRICS_ADDR", ":9091"),
 	}
 }
 

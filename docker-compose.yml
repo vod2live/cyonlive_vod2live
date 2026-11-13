@@ -75,6 +75,8 @@ services:
 
   media-worker:
     stop_grace_period: 30s
+    expose:
+      - "9091"
     build:
       context: .
       dockerfile: deployments/docker/Dockerfile
@@ -91,6 +93,7 @@ services:
       MINIO_BUCKET: ${MINIO_BUCKET:-vod2live}
       MEDIA_TEMP_DIR: /tmp/vod2live-media
       FFMPEG_PATH: ffmpeg
+      MEDIA_METRICS_ADDR: :9091
     depends_on:
       postgres:
         condition: service_healthy

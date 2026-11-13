@@ -8,3 +8,7 @@ scrape_configs:
     metrics_path: /metrics
     static_configs:
       - targets: ['api:8080']
+  - job_name: vod2live-media-worker
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['media-worker:9091']

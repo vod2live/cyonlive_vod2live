@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -12,6 +14,7 @@ import (
 	"github.com/vod2live/cyonlive_vod2live/internal/db"
 	"github.com/vod2live/cyonlive_vod2live/internal/library"
 	"github.com/vod2live/cyonlive_vod2live/internal/media"
+	"github.com/vod2live/cyonlive_vod2live/internal/metrics"
 	"github.com/vod2live/cyonlive_vod2live/internal/retry"
 	"github.com/vod2live/cyonlive_vod2live/internal/storage"
 )
@@ -36,8 +39,18 @@ func main() {
 	if err = retry.Run(ctx, 8, 500*time.Millisecond, func() error { return store.EnsureBucket(ctx) }); err != nil {
 		log.Fatal(err)
 	}
+	workerMetrics := &metrics.Metrics{}
+	metricsServer := &http.Server{Addr: mediaCfg.MetricsAddr, Handler: http.HandlerFunc(workerMetrics.Handler)}
+	go func() {
+		if serveErr := metricsServer.ListenAndServe(); serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
+			log.Printf("media worker metrics server failed: %v", serveErr)
+		}
+	}()
 	log.Println("vod2live media worker started")
-	err = (media.Worker{Jobs: library.Repository{Pool: pool}, Storage: store, FFmpegPath: mediaCfg.FFmpegPath, TempDir: mediaCfg.MediaTempDir, Poll: time.Duration(mediaCfg.MediaPollSeconds) * time.Second, KeepSource: mediaCfg.KeepOriginal}).Run(ctx)
+	err = (media.Worker{Jobs: library.Repository{Pool: pool}, Storage: store, FFmpegPath: mediaCfg.FFmpegPath, TempDir: mediaCfg.MediaTempDir, Poll: time.Duration(mediaCfg.MediaPollSeconds) * time.Second, KeepSource: mediaCfg.KeepOriginal, Metrics: workerMetrics}).Run(ctx)
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_ = metricsServer.Shutdown(shutdownCtx)
 	if err != nil && err != context.Canceled {
 		log.Fatal(err)
 	}

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/vod2live/cyonlive_vod2live/internal/library"
+	"github.com/vod2live/cyonlive_vod2live/internal/metrics"
 	"github.com/vod2live/cyonlive_vod2live/internal/storage"
 )
 
@@ -22,29 +23,52 @@ type Worker struct {
 	TempDir    string
 	Poll       time.Duration
 	KeepSource bool
+	Metrics    *metrics.Metrics
 }
 
 func (w Worker) Run(ctx context.Context) error {
+	w.setState("starting")
 	if err := w.Storage.EnsureBucket(ctx); err != nil {
+		w.setState("failed")
 		return err
 	}
 	if w.Poll <= 0 {
 		w.Poll = 5 * time.Second
 	}
+	w.setState("idle")
 	for {
 		job, err := w.Jobs.ClaimJob(ctx)
 		if err == nil {
+			started := time.Now()
+			w.setState("processing")
 			if err = w.process(ctx, job); err != nil {
 				log.Printf("media job %s failed: %v", job.ID, err)
 				_ = w.Jobs.FinishJob(ctx, job, "", 0, err.Error(), w.KeepSource)
+				w.observeJob("failed", time.Since(started))
+			} else {
+				w.observeJob("completed", time.Since(started))
 			}
+			w.setState("idle")
 			continue
 		}
 		select {
 		case <-ctx.Done():
+			w.setState("stopping")
 			return ctx.Err()
 		case <-time.After(w.Poll):
 		}
+	}
+}
+
+func (w Worker) setState(state string) {
+	if w.Metrics != nil {
+		w.Metrics.SetMediaWorkerState(state)
+	}
+}
+
+func (w Worker) observeJob(status string, duration time.Duration) {
+	if w.Metrics != nil {
+		w.Metrics.ObserveMediaJob(status, duration)
 	}
 }
 

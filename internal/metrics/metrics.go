@@ -14,6 +14,7 @@ import (
 )
 
 var latencyBuckets = []float64{0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10}
+var mediaLatencyBuckets = []float64{1, 5, 15, 30, 60, 300, 900}
 
 type Metrics struct {
 	Requests         atomic.Uint64
@@ -24,6 +25,57 @@ type Metrics struct {
 	latencyCount     uint64
 	latencySum       float64
 	latencyBuckets   []uint64
+	mediaJobs        map[string]uint64
+	mediaDurations   map[string]durationSummary
+	mediaWorkerState string
+}
+
+type durationSummary struct {
+	count   uint64
+	sum     float64
+	buckets []uint64
+}
+
+// ObserveMediaJob records one terminal media-job outcome and its processing
+// duration in seconds. Status values are intentionally limited to completed
+// and failed to keep Prometheus cardinality bounded.
+func (m *Metrics) ObserveMediaJob(status string, duration time.Duration) {
+	if status != "completed" && status != "failed" {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.mediaJobs == nil {
+		m.mediaJobs = make(map[string]uint64)
+	}
+	if m.mediaDurations == nil {
+		m.mediaDurations = make(map[string]durationSummary)
+	}
+	m.mediaJobs[status]++
+	summary := m.mediaDurations[status]
+	if summary.buckets == nil {
+		summary.buckets = make([]uint64, len(mediaLatencyBuckets))
+	}
+	seconds := duration.Seconds()
+	summary.count++
+	summary.sum += seconds
+	for i, bound := range mediaLatencyBuckets {
+		if seconds <= bound {
+			summary.buckets[i]++
+		}
+	}
+	m.mediaDurations[status] = summary
+}
+
+func (m *Metrics) SetMediaWorkerState(state string) {
+	switch state {
+	case "starting", "idle", "processing", "stopping", "failed":
+	default:
+		return
+	}
+	m.mu.Lock()
+	m.mediaWorkerState = state
+	m.mu.Unlock()
 }
 
 func (m *Metrics) observe(status int, seconds float64) {
@@ -76,6 +128,16 @@ func (m *Metrics) Handler(w http.ResponseWriter, r *http.Request) {
 	}
 	buckets := append([]uint64(nil), m.latencyBuckets...)
 	count, sum := m.latencyCount, m.latencySum
+	mediaJobs := make(map[string]uint64, len(m.mediaJobs))
+	for status, value := range m.mediaJobs {
+		mediaJobs[status] = value
+	}
+	mediaDurations := make(map[string]durationSummary, len(m.mediaDurations))
+	for status, summary := range m.mediaDurations {
+		summary.buckets = append([]uint64(nil), summary.buckets...)
+		mediaDurations[status] = summary
+	}
+	mediaWorkerState := m.mediaWorkerState
 	m.mu.Unlock()
 	keys := make([]int, 0, len(statuses))
 	for status := range statuses {
@@ -95,6 +157,23 @@ func (m *Metrics) Handler(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "vod2live_http_request_duration_seconds_bucket{le=\"+Inf\"} %d\n", count)
 	fmt.Fprintf(w, "vod2live_http_request_duration_seconds_sum %f\n", sum)
 	fmt.Fprintf(w, "vod2live_http_request_duration_seconds_count %d\n", count)
+	for _, status := range []string{"completed", "failed"} {
+		fmt.Fprintf(w, "vod2live_media_jobs_total{status=%q} %d\n", status, mediaJobs[status])
+		summary := mediaDurations[status]
+		for i, bound := range mediaLatencyBuckets {
+			value := uint64(0)
+			if i < len(summary.buckets) {
+				value = summary.buckets[i]
+			}
+			fmt.Fprintf(w, "vod2live_media_job_duration_seconds_bucket{status=%q,le=%q} %d\n", status, strconv.FormatFloat(bound, 'f', -1, 64), value)
+		}
+		fmt.Fprintf(w, "vod2live_media_job_duration_seconds_bucket{status=%q,le=\"+Inf\"} %d\n", status, summary.count)
+		fmt.Fprintf(w, "vod2live_media_job_duration_seconds_sum{status=%q} %f\n", status, summary.sum)
+		fmt.Fprintf(w, "vod2live_media_job_duration_seconds_count{status=%q} %d\n", status, summary.count)
+	}
+	if mediaWorkerState != "" {
+		fmt.Fprintf(w, "vod2live_media_worker_state{state=%q} 1\n", mediaWorkerState)
+	}
 	fmt.Fprintf(w, "vod2live_build_info{version=%q,commit=%q} 1\n", buildinfo.Version, buildinfo.Commit)
 }
 
