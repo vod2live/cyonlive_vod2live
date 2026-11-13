@@ -11,7 +11,7 @@
 1. Validar CI verde, migrações reaplicáveis e dump verificável.
 2. Aplicar secrets no ambiente sem gravá-los no repositório.
 3. Executar `docker compose --env-file deployments/staging/.env -f deployments/staging/docker-compose.staging.yml --profile tools run --rm migration-runner` antes de iniciar a nova versão ou trocar o tráfego. O arquivo `.env` deve ser provisionado fora do Git a partir do secret manager; o processo usa `DATABASE_URL`, mantém o advisory lock na mesma conexão e recusa checksums alterados.
-4. Subir a nova versão em staging e executar E2E, contrato, load e HA smoke.
+4. Subir a nova versão em staging e executar E2E, contrato, load e HA smoke. O override de staging remove as dependências de containers locais; `DATABASE_URL`, `REDIS_ADDR` e `MINIO_ENDPOINT` devem apontar aos serviços externos.
 5. Fazer deploy rolling em produção.
 6. Confirmar `/readyz`, `/version`, métricas e playback assinado.
 

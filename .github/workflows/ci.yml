@@ -18,6 +18,7 @@ jobs:
       - run: docker compose config --quiet
       - run: IMAGE_TAG=ci DATABASE_URL='postgres://test:test@db:5432/test' REDIS_ADDR=redis:6379 API_KEY=test AUTH_TOKEN_SECRET=test PLAYBACK_TOKEN_SECRET=test CORS_ALLOWED_ORIGIN=https://example.test MINIO_ENDPOINT=minio:9000 MINIO_ROOT_USER=test MINIO_ROOT_PASSWORD=test docker compose -f docker-compose.yml -f deployments/staging/docker-compose.staging.yml config --quiet
       - run: VERSION=${GITHUB_REF_NAME} COMMIT=${GITHUB_SHA} BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ) docker compose build api playout
+      - run: docker compose build minio
       - run: docker compose up -d --wait --wait-timeout 120 postgres redis hls-fixture
       - run: ./scripts/verify-migrations.sh
       - run: VOD2LIVE_TEST_DATABASE_URL='postgres://vod2live:vod2live@localhost:5432/vod2live?sslmode=disable' go test ./internal/library -run '^TestClaimJobConcurrentWorkersClaimJobOnce$' -count=1

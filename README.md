@@ -450,7 +450,7 @@ O upload reserva quota antes de gerar a URL pré-assinada. Ao ser confirmado, cr
 
 Assets de bibliotecas privadas carregam o `tenant_id` da biblioteca. A API e as consultas de programação permitem conteúdo privado somente quando o `tenant_id` do canal coincide; bibliotecas compartilhadas da organização têm `tenant_id` nulo e podem ser usadas por qualquer tenant daquela organização. A API exige associação do usuário ao tenant para criar bibliotecas, canais, uploads e consultar quota/conteúdo privado. Uploads são limitados a 20 GiB e tipos de mídia suportados; o tamanho real é conferido no storage contra a reserva antes do job ser criado.
 
-O Compose local inclui `minio` e `media-worker`. Para produção, use bucket privado, credenciais via secret manager, limites de CPU/memória no worker e políticas de retenção para originais, temporários e HLS publicado.
+O Compose local inclui `minio` e `media-worker`. Como a imagem comunitária precompilada do MinIO deixou de estar disponível nos registries públicos, o container local compila a release upstream fixada pelo commit em `deployments/minio/Dockerfile`; esse build serve apenas para desenvolvimento e CI, não como imagem de produção. O override de staging remove as dependências locais e usa PostgreSQL, Redis e MinIO externos. Para produção, use bucket privado, credenciais via secret manager, limites de CPU/memória no worker e políticas de retenção para originais, temporários e HLS publicado.
 
 `GET /v1/media/jobs` retorna contagens de jobs `queued`, `processing`, `completed`, `failed` e `dead`, permitindo alertas e acompanhamento por organização ou tenant.
 
