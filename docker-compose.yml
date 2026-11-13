@@ -47,7 +47,7 @@ services:
       hls-fixture:
         condition: service_started
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/readyz"]
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:8080/readyz"]
       interval: 10s
       timeout: 5s
       retries: 5
