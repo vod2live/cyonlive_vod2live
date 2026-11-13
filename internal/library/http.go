@@ -1,7 +1,9 @@
 package library
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -13,8 +15,30 @@ import (
 )
 
 type Handler struct {
-	Repo    Repository
-	Storage *storage.Client
+	Repo         Repository
+	Storage      *storage.Client
+	TenantAccess TenantAuthorizer
+}
+
+type TenantAuthorizer interface {
+	UserHasTenant(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) (bool, error)
+}
+
+func (h Handler) authorizeTenant(ctx context.Context, p auth.Principal, tenant *uuid.UUID) error {
+	if tenant == nil {
+		return nil
+	}
+	if h.TenantAccess == nil {
+		return fmt.Errorf("tenant authorization is not configured")
+	}
+	ok, err := h.TenantAccess.UserHasTenant(ctx, p.UserID, p.OrganizationID, *tenant)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("tenant access denied")
+	}
+	return nil
 }
 
 func (h Handler) ListTenants(w http.ResponseWriter, r *http.Request) {
@@ -50,6 +74,10 @@ func (h Handler) CreateTenant(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "erro ao criar tenant", 422)
 		return
 	}
+	if err := h.Repo.AddTenantMember(r.Context(), p.OrganizationID, item.ID, p.UserID); err != nil {
+		http.Error(w, "erro ao associar administrador ao tenant", http.StatusInternalServerError)
+		return
+	}
 	write(w, 201, item)
 }
 
@@ -65,6 +93,10 @@ func (h Handler) SetQuota(w http.ResponseWriter, r *http.Request) {
 	}
 	if json.NewDecoder(r.Body).Decode(&req) != nil || req.QuotaBytes < 0 {
 		http.Error(w, "quota_bytes é obrigatório e não pode ser negativa", 400)
+		return
+	}
+	if err := h.authorizeTenant(r.Context(), p, req.TenantID); err != nil {
+		http.Error(w, "tenant não autorizado", http.StatusForbidden)
 		return
 	}
 	if err := h.Repo.EnsureQuota(r.Context(), p.OrganizationID, req.TenantID, req.QuotaBytes); err != nil {
@@ -90,7 +122,13 @@ func (h Handler) List(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "erro ao listar bibliotecas", 500)
 		return
 	}
-	write(w, 200, items)
+	filtered := items[:0]
+	for _, item := range items {
+		if item.TenantID == nil || h.authorizeTenant(r.Context(), p, item.TenantID) == nil {
+			filtered = append(filtered, item)
+		}
+	}
+	write(w, 200, filtered)
 }
 func (h Handler) Create(w http.ResponseWriter, r *http.Request) {
 	p, ok := auth.PrincipalFrom(r.Context())
@@ -104,6 +142,10 @@ func (h Handler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	if json.NewDecoder(r.Body).Decode(&req) != nil || strings.TrimSpace(req.Name) == "" {
 		http.Error(w, "name é obrigatório", 400)
+		return
+	}
+	if err := h.authorizeTenant(r.Context(), p, req.TenantID); err != nil {
+		http.Error(w, "tenant não autorizado", http.StatusForbidden)
 		return
 	}
 	item, err := h.Repo.CreateLibrary(r.Context(), p.OrganizationID, req.TenantID, req.Name)
@@ -127,6 +169,10 @@ func (h Handler) Quota(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		tenant = &id
+	}
+	if err := h.authorizeTenant(r.Context(), p, tenant); err != nil {
+		http.Error(w, "tenant não autorizado", http.StatusForbidden)
+		return
 	}
 	q, err := h.Repo.Quota(r.Context(), p.OrganizationID, tenant)
 	if err != nil {
@@ -152,8 +198,16 @@ func (h Handler) CreateUpload(w http.ResponseWriter, r *http.Request) {
 		SizeBytes   int64      `json:"size_bytes"`
 		TenantID    *uuid.UUID `json:"tenant_id"`
 	}
-	if json.NewDecoder(r.Body).Decode(&req) != nil || req.Filename == "" || req.SizeBytes <= 0 {
+	if json.NewDecoder(r.Body).Decode(&req) != nil || req.Filename == "" || req.SizeBytes <= 0 || req.SizeBytes > MaxUploadBytes {
 		http.Error(w, "filename, content_type e size_bytes são obrigatórios", 400)
+		return
+	}
+	if !acceptedUploadType(req.ContentType) {
+		http.Error(w, "content_type não suportado", http.StatusUnsupportedMediaType)
+		return
+	}
+	if err := h.authorizeTenant(r.Context(), p, req.TenantID); err != nil {
+		http.Error(w, "tenant não autorizado", http.StatusForbidden)
 		return
 	}
 	u, err := h.Repo.ReserveUpload(r.Context(), p.OrganizationID, req.TenantID, libraryID, req.Filename, req.ContentType, req.SizeBytes, h.Storage.Bucket)
@@ -168,6 +222,45 @@ func (h Handler) CreateUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	write(w, 201, map[string]any{"upload": u, "upload_url": put.String(), "expires_at": time.Now().UTC().Add(30 * time.Minute)})
 }
+
+func acceptedUploadType(contentType string) bool {
+	switch strings.ToLower(strings.TrimSpace(strings.Split(contentType, ";")[0])) {
+	case "video/mp4", "video/quicktime", "video/x-matroska", "video/webm", "application/octet-stream":
+		return true
+	default:
+		return false
+	}
+}
+
+func (h Handler) ListUploads(w http.ResponseWriter, r *http.Request) {
+	p, ok := auth.PrincipalFrom(r.Context())
+	if !ok {
+		http.Error(w, "não autorizado", http.StatusUnauthorized)
+		return
+	}
+	var libraryID *uuid.UUID
+	if raw := r.URL.Query().Get("library_id"); raw != "" {
+		id, err := uuid.Parse(raw)
+		if err != nil {
+			http.Error(w, "library_id inválido", http.StatusBadRequest)
+			return
+		}
+		libraryID = &id
+	}
+	items, err := h.Repo.ListUploads(r.Context(), p.OrganizationID, libraryID)
+	if err != nil {
+		http.Error(w, "erro ao listar uploads", http.StatusInternalServerError)
+		return
+	}
+	filtered := items[:0]
+	for _, item := range items {
+		if item.TenantID == nil || h.authorizeTenant(r.Context(), p, item.TenantID) == nil {
+			filtered = append(filtered, item)
+		}
+	}
+	write(w, http.StatusOK, filtered)
+}
+
 func (h Handler) CompleteUpload(w http.ResponseWriter, r *http.Request) {
 	p, ok := auth.PrincipalFrom(r.Context())
 	if !ok {
@@ -184,6 +277,15 @@ func (h Handler) CompleteUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	if json.NewDecoder(r.Body).Decode(&req) != nil || req.SizeBytes <= 0 {
 		http.Error(w, "size_bytes é obrigatório", 400)
+		return
+	}
+	tenant, err := h.Repo.UploadTenant(r.Context(), p.OrganizationID, id)
+	if err != nil {
+		http.Error(w, "upload não encontrado", http.StatusNotFound)
+		return
+	}
+	if err := h.authorizeTenant(r.Context(), p, tenant); err != nil {
+		http.Error(w, "tenant não autorizado", http.StatusForbidden)
 		return
 	}
 	actual, _, err := h.Storage.Stat(r.Context(), func() string {

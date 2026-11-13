@@ -110,6 +110,16 @@ func (r Repository) RoleForUser(ctx context.Context, userID, organizationID uuid
 	return role, err
 }
 
+func (r Repository) UserHasTenant(ctx context.Context, userID, organizationID, tenantID uuid.UUID) (bool, error) {
+	var allowed bool
+	err := r.Pool.QueryRow(ctx, `SELECT EXISTS(
+		SELECT 1 FROM tenant_memberships tm
+		JOIN organization_memberships om ON om.organization_id=tm.organization_id AND om.user_id=tm.user_id
+		WHERE tm.user_id=$1 AND tm.organization_id=$2 AND tm.tenant_id=$3
+	)`, userID, organizationID, tenantID).Scan(&allowed)
+	return allowed, err
+}
+
 func (r Repository) CreateOrganization(ctx context.Context, userID uuid.UUID, name, slug string) (Organization, error) {
 	tx, err := r.Pool.Begin(ctx)
 	if err != nil {

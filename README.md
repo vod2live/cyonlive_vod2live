@@ -236,6 +236,8 @@ A identidade é organizada em:
 
 Canais, ativos e itens da grade são isolados por organização. As consultas HTTP filtram pelo tenant do token e as chaves estrangeiras compostas no banco reforçam que uma grade não associe recursos de organizações diferentes.
 
+Operações com `tenant_id` exigem associação explícita do usuário em `tenant_memberships`; pertencer à organização, por si só, não autoriza acessar a biblioteca de um tenant. A migração `005_production_hardening.sql` faz o backfill inicial para administradores existentes, e o criador de um tenant recebe sua associação automaticamente.
+
 Operações de escrita autenticadas registram ator, organização, ação, recurso, status HTTP e request ID na tabela de auditoria.
 
 ## Ingestão HLS e SSRF
@@ -252,6 +254,10 @@ Proteções aplicadas:
 - bloqueio de origens privadas por padrão.
 
 Para fixtures locais do Compose, `ALLOW_PRIVATE_HLS=true` é usado somente no ambiente de desenvolvimento. Em staging e produção, mantenha `ALLOW_PRIVATE_HLS=false`.
+
+### Recuperação do worker de mídia
+
+Jobs de conversão usam lease de 15 minutos. Uma instância que cai deixa o job em `processing`, mas outra instância pode retomá-lo após a expiração do lease. Falhas transitórias voltam para `queued` até cinco tentativas; depois disso o job vai para `dead` e conserva a mensagem de erro para operação. A conclusão do job atualiza job, asset, objeto e quota na mesma transação; saídas HLS parciais são removidas quando a conversão falha.
 
 ## Playback assinado
 
@@ -395,15 +401,17 @@ Endpoints adicionados:
 GET  /v1/libraries
 POST /v1/libraries
 GET  /v1/storage/quota
+GET  /v1/uploads?library_id={libraryID}
 POST /v1/libraries/{libraryID}/uploads
 POST /v1/uploads/{uploadID}/complete
 GET  /v1/review/assets
 POST /v1/assets/{id}/review
+GET  /v1/assets/{id}/review/history
 ```
 
 O upload reserva quota antes de gerar a URL pré-assinada. Ao ser confirmado, cria um job assíncrono. O `media-worker` baixa o original do MinIO, executa FFmpeg em container, produz um master HLS com variante 720p e envia playlists/segmentos de volta ao MinIO. A conversão bem-sucedida marca o asset como tecnicamente `valid`, mas seu estado editorial permanece `pending`; ele não pode ser agendado até que um administrador/editor o aprove pela fila de revisão. A decisão e o revisor ficam registrados; rejeições desabilitam itens de grade existentes. A verificação é feita no backend ao criar/reativar programação e ao consultar a grade usada pelo manifest.
 
-Assets de bibliotecas privadas carregam o `tenant_id` da biblioteca. A API e as consultas de programação permitem conteúdo privado somente quando o `tenant_id` do canal coincide; bibliotecas compartilhadas da organização têm `tenant_id` nulo e podem ser usadas por qualquer tenant daquela organização. Os endpoints atuais autorizam administradores e editores organizacionais; o modelo de identidade ainda não inclui associação de usuário a tenant.
+Assets de bibliotecas privadas carregam o `tenant_id` da biblioteca. A API e as consultas de programação permitem conteúdo privado somente quando o `tenant_id` do canal coincide; bibliotecas compartilhadas da organização têm `tenant_id` nulo e podem ser usadas por qualquer tenant daquela organização. A API exige associação do usuário ao tenant para criar bibliotecas, canais, uploads e consultar quota/conteúdo privado. Uploads são limitados a 20 GiB e tipos de mídia suportados; o tamanho real é conferido no storage contra a reserva antes do job ser criado.
 
 O Compose local inclui `minio` e `media-worker`. Para produção, use bucket privado, credenciais via secret manager, limites de CPU/memória no worker e políticas de retenção para originais, temporários e HLS publicado.
 

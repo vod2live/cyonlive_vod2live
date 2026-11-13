@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -111,5 +112,35 @@ func (r PostgresRepository) Review(ctx context.Context, organizationID, assetID,
 			return err
 		}
 	}
+	if _, err = tx.Exec(ctx, `INSERT INTO asset_review_history(organization_id,tenant_id,asset_id,reviewer_id,decision,note)
+		SELECT organization_id,tenant_id,id,$1,$2,$3 FROM assets WHERE id=$4 AND organization_id=$5`, reviewerID, status, strings.TrimSpace(note), assetID, organizationID); err != nil {
+		return err
+	}
 	return tx.Commit(ctx)
+}
+
+type ReviewEvent struct {
+	ID         int64      `json:"id"`
+	AssetID    uuid.UUID  `json:"asset_id"`
+	ReviewerID *uuid.UUID `json:"reviewer_id,omitempty"`
+	Decision   string     `json:"decision"`
+	Note       string     `json:"note"`
+	CreatedAt  time.Time  `json:"created_at"`
+}
+
+func (r PostgresRepository) ReviewHistory(ctx context.Context, organizationID, assetID uuid.UUID) ([]ReviewEvent, error) {
+	rows, err := r.Pool.Query(ctx, `SELECT id,asset_id,reviewer_id,decision,note,created_at FROM asset_review_history WHERE organization_id=$1 AND asset_id=$2 ORDER BY created_at DESC`, organizationID, assetID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var result []ReviewEvent
+	for rows.Next() {
+		var item ReviewEvent
+		if err := rows.Scan(&item.ID, &item.AssetID, &item.ReviewerID, &item.Decision, &item.Note, &item.CreatedAt); err != nil {
+			return nil, err
+		}
+		result = append(result, item)
+	}
+	return result, rows.Err()
 }

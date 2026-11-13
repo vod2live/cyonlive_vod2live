@@ -59,7 +59,8 @@ func main() {
 	if err != nil {
 		log.Fatalf("storage: %v", err)
 	}
-	libraryHandler := library.Handler{Repo: library.Repository{Pool: pool}, Storage: objectStore}
+	identities := identity.Repository{Pool: pool}
+	libraryHandler := library.Handler{Repo: library.Repository{Pool: pool}, Storage: objectStore, TenantAccess: identities}
 	channels := channel.PostgresRepository{Pool: pool}
 	schedules := schedule.PostgresRepository{Pool: pool}
 	manifests := manifest.Service{Channels: channels, Assets: assets, Schedules: schedules, Cache: manifest.ManifestCache{Client: redisClient}, Storage: objectStore}
@@ -72,7 +73,6 @@ func main() {
 	if err != nil {
 		log.Fatalf("auth configuration: %v", err)
 	}
-	identities := identity.Repository{Pool: pool}
 	identityHandler := identity.Handler{Repository: identities, Tokens: sessionTokens, BootstrapKey: cfg.APIKey}
 	playoutStore := playout.RedisStore{Client: redisClient}
 	apiMetrics := &metrics.Metrics{}
@@ -123,6 +123,7 @@ func main() {
 			api.Get("/tenants", libraryHandler.ListTenants)
 			api.With(auth.RequireRoles(auth.RoleAdmin)).Post("/tenants", libraryHandler.CreateTenant)
 			api.Get("/libraries", libraryHandler.List)
+			api.Get("/uploads", libraryHandler.ListUploads)
 			api.With(auth.RequireRoles(auth.RoleAdmin, auth.RoleEditor)).Post("/libraries", libraryHandler.Create)
 			api.Get("/storage/quota", libraryHandler.Quota)
 			api.With(auth.RequireRoles(auth.RoleAdmin)).Post("/storage/quota", libraryHandler.SetQuota)
@@ -140,9 +141,10 @@ func main() {
 			api.With(auth.RequireRoles(auth.RoleAdmin, auth.RoleEditor)).Post("/assets", createAsset(assets))
 			api.With(auth.RequireRoles(auth.RoleAdmin, auth.RoleEditor)).Get("/review/assets", reviewQueue(assets))
 			api.With(auth.RequireRoles(auth.RoleAdmin, auth.RoleEditor)).Post("/assets/{id}/review", reviewAsset(assets))
+			api.With(auth.RequireRoles(auth.RoleAdmin, auth.RoleEditor)).Get("/assets/{id}/review/history", reviewHistory(assets))
 			api.Get("/assets/{id}", getAsset(assets))
 			api.With(auth.RequireRoles(auth.RoleAdmin, auth.RoleEditor)).Post("/assets/{id}/validate", validateAsset(assets))
-			api.With(auth.RequireRoles(auth.RoleAdmin, auth.RoleEditor)).Post("/channels", createChannel(channels))
+			api.With(auth.RequireRoles(auth.RoleAdmin, auth.RoleEditor)).Post("/channels", createChannel(channels, identities))
 			api.Get("/channels", listChannels(channels))
 			api.Get("/channels/{id}", getChannel(channels))
 			api.With(auth.RequireRoles(auth.RoleAdmin, auth.RoleOperator)).Post("/channels/{id}/start", updateChannelStatus(channels, "running"))
@@ -303,6 +305,31 @@ func reviewAsset(repo asset.PostgresRepository) http.HandlerFunc {
 	}
 }
 
+func reviewHistory(repo asset.PostgresRepository) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		principal, ok := auth.PrincipalFrom(r.Context())
+		if !ok {
+			http.Error(w, "não autorizado", http.StatusUnauthorized)
+			return
+		}
+		id, err := uuid.Parse(chi.URLParam(r, "id"))
+		if err != nil {
+			http.Error(w, "id inválido", http.StatusBadRequest)
+			return
+		}
+		if _, err = repo.FindByIDInOrg(r.Context(), principal.OrganizationID, id); err != nil {
+			http.Error(w, "asset não encontrado", http.StatusNotFound)
+			return
+		}
+		history, err := repo.ReviewHistory(r.Context(), principal.OrganizationID, id)
+		if err != nil {
+			http.Error(w, "erro ao consultar histórico editorial", http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, http.StatusOK, history)
+	}
+}
+
 type channelRequest struct {
 	Name        string     `json:"name"`
 	Slug        string     `json:"slug"`
@@ -310,7 +337,9 @@ type channelRequest struct {
 	TenantID    *uuid.UUID `json:"tenant_id,omitempty"`
 }
 
-func createChannel(repo channel.PostgresRepository) http.HandlerFunc {
+func createChannel(repo channel.PostgresRepository, tenantAccess interface {
+	UserHasTenant(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) (bool, error)
+}) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		principal, ok := auth.PrincipalFrom(r.Context())
 		if !ok {
@@ -321,6 +350,17 @@ func createChannel(repo channel.PostgresRepository) http.HandlerFunc {
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Name) == "" {
 			http.Error(w, "name é obrigatório", 400)
 			return
+		}
+		if req.TenantID != nil {
+			allowed, accessErr := tenantAccess.UserHasTenant(r.Context(), principal.UserID, principal.OrganizationID, *req.TenantID)
+			if accessErr != nil {
+				http.Error(w, "falha ao validar tenant", http.StatusInternalServerError)
+				return
+			}
+			if !allowed {
+				http.Error(w, "tenant não autorizado", http.StatusForbidden)
+				return
+			}
 		}
 		slug := channel.NormalizeSlug(req.Slug)
 		if slug == "" {

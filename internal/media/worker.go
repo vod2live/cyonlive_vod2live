@@ -36,7 +36,7 @@ func (w Worker) Run(ctx context.Context) error {
 		if err == nil {
 			if err = w.process(ctx, job); err != nil {
 				log.Printf("media job %s failed: %v", job.ID, err)
-				_ = w.Jobs.FinishJob(ctx, job, "", 0, err.Error())
+				_ = w.Jobs.FinishJob(ctx, job, "", 0, err.Error(), w.KeepSource)
 			}
 			continue
 		}
@@ -77,6 +77,7 @@ func (w Worker) process(ctx context.Context, job library.Job) error {
 	}
 	root := filepath.Join(dir, "hls")
 	var total int64
+	var uploaded []string
 	err = filepath.WalkDir(root, func(path string, d fs.DirEntry, e error) error {
 		if e != nil {
 			return e
@@ -90,6 +91,7 @@ func (w Worker) process(ctx context.Context, job library.Job) error {
 		if err := w.Storage.UploadFile(ctx, key, path, ct); err != nil {
 			return err
 		}
+		uploaded = append(uploaded, key)
 		info, e := os.Stat(path)
 		if e == nil {
 			total += info.Size()
@@ -97,21 +99,22 @@ func (w Worker) process(ctx context.Context, job library.Job) error {
 		return nil
 	})
 	if err != nil {
+		for _, key := range uploaded {
+			_ = w.Storage.Delete(ctx, key)
+		}
 		return err
 	}
 	masterKey := fmt.Sprintf("hls/organization/%s/asset/%s/master.m3u8", job.OrganizationID, job.AssetID)
-	if err := w.Jobs.FinishJob(ctx, job, w.Storage.ObjectURI(masterKey), total, ""); err != nil {
-		return err
-	}
-	delta := total
-	if !w.KeepSource {
-		delta -= job.SourceBytes
-	}
-	if err := w.Jobs.AdjustUsage(ctx, job.OrganizationID, job.TenantID, delta); err != nil {
+	if err := w.Jobs.FinishJob(ctx, job, w.Storage.ObjectURI(masterKey), total, "", w.KeepSource); err != nil {
+		for _, key := range uploaded {
+			_ = w.Storage.Delete(ctx, key)
+		}
 		return err
 	}
 	if !w.KeepSource {
-		_ = w.Storage.Delete(ctx, job.ObjectKey)
+		if err := w.Storage.Delete(ctx, job.ObjectKey); err != nil {
+			log.Printf("media source cleanup %s failed: %v", job.ID, err)
+		}
 	}
 	return nil
 }

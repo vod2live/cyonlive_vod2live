@@ -13,6 +13,8 @@ import (
 
 type Repository struct{ Pool *pgxpool.Pool }
 
+const MaxUploadBytes int64 = 20 << 30
+
 type Library struct {
 	ID             uuid.UUID  `json:"id"`
 	OrganizationID uuid.UUID  `json:"organization_id"`
@@ -90,7 +92,7 @@ func (r Repository) ReserveUpload(ctx context.Context, org uuid.UUID, tenant *uu
 	if expected <= 0 {
 		return Upload{}, fmt.Errorf("size_bytes must be positive")
 	}
-	if expected > 1<<40 {
+	if expected > MaxUploadBytes {
 		return Upload{}, fmt.Errorf("file is too large")
 	}
 	name := filepath.Base(strings.ReplaceAll(filename, "\\", "/"))
@@ -155,6 +157,11 @@ func (r Repository) CompleteUpload(ctx context.Context, org, objectID uuid.UUID,
 	if actualBytes <= 0 {
 		return u, fmt.Errorf("uploaded object is empty")
 	}
+	if actualBytes > u.ExpectedBytes {
+		_, _ = tx.Exec(ctx, `UPDATE storage_objects SET status='failed',size_bytes=$1,updated_at=now() WHERE id=$2`, actualBytes, objectID)
+		_, _ = tx.Exec(ctx, `UPDATE storage_pools SET reserved_bytes=GREATEST(reserved_bytes-$1,0),updated_at=now() WHERE organization_id=$2 AND tenant_id IS NOT DISTINCT FROM $3`, u.ExpectedBytes, org, tenant)
+		return u, fmt.Errorf("uploaded object exceeds reserved size")
+	}
 	if _, err = tx.Exec(ctx, `UPDATE storage_objects SET size_bytes=$1,status='uploaded',updated_at=now() WHERE id=$2`, actualBytes, objectID); err != nil {
 		return u, err
 	}
@@ -180,6 +187,36 @@ func (r Repository) UploadKey(ctx context.Context, org, objectID uuid.UUID) (str
 	return key, err
 }
 
+func (r Repository) UploadTenant(ctx context.Context, org, objectID uuid.UUID) (*uuid.UUID, error) {
+	var tenant *uuid.UUID
+	err := r.Pool.QueryRow(ctx, `SELECT tenant_id FROM storage_objects WHERE organization_id=$1 AND id=$2`, org, objectID).Scan(&tenant)
+	return tenant, err
+}
+
+func (r Repository) ListUploads(ctx context.Context, org uuid.UUID, libraryID *uuid.UUID) ([]Upload, error) {
+	query := `SELECT id,organization_id,tenant_id,library_id,asset_id,object_key,expected_size_bytes,status FROM storage_objects WHERE organization_id=$1`
+	args := []any{org}
+	if libraryID != nil {
+		query += ` AND library_id=$2`
+		args = append(args, *libraryID)
+	}
+	query += ` ORDER BY created_at DESC LIMIT 200`
+	rows, err := r.Pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var result []Upload
+	for rows.Next() {
+		var u Upload
+		if err := rows.Scan(&u.ID, &u.OrganizationID, &u.TenantID, &u.LibraryID, &u.AssetID, &u.ObjectKey, &u.ExpectedBytes, &u.Status); err != nil {
+			return nil, err
+		}
+		result = append(result, u)
+	}
+	return result, rows.Err()
+}
+
 type Job struct {
 	ID, OrganizationID, AssetID, SourceObjectID uuid.UUID
 	TenantID                                    *uuid.UUID
@@ -195,14 +232,17 @@ func (r Repository) ClaimJob(ctx context.Context) (Job, error) {
 	defer tx.Rollback(ctx)
 	var j Job
 	var tenantID uuid.UUID
-	err = tx.QueryRow(ctx, `SELECT j.id,j.organization_id,j.asset_id,j.source_object_id,COALESCE(j.tenant_id,'00000000-0000-0000-0000-000000000000'),o.object_key,o.bucket,o.size_bytes FROM media_jobs j JOIN storage_objects o ON o.id=j.source_object_id WHERE j.status='queued' ORDER BY j.created_at FOR UPDATE OF j SKIP LOCKED LIMIT 1`).Scan(&j.ID, &j.OrganizationID, &j.AssetID, &j.SourceObjectID, &tenantID, &j.ObjectKey, &j.Bucket, &j.SourceBytes)
+	err = tx.QueryRow(ctx, `SELECT j.id,j.organization_id,j.asset_id,j.source_object_id,COALESCE(j.tenant_id,'00000000-0000-0000-0000-000000000000'),o.object_key,o.bucket,o.size_bytes
+		FROM media_jobs j JOIN storage_objects o ON o.id=j.source_object_id
+		WHERE (j.status='queued' OR (j.status='processing' AND j.lease_until < now())) AND j.attempts < j.max_attempts
+		ORDER BY j.created_at FOR UPDATE OF j SKIP LOCKED LIMIT 1`).Scan(&j.ID, &j.OrganizationID, &j.AssetID, &j.SourceObjectID, &tenantID, &j.ObjectKey, &j.Bucket, &j.SourceBytes)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			return Job{}, err
 		}
 		return Job{}, err
 	}
-	if _, err = tx.Exec(ctx, `UPDATE media_jobs SET status='processing',attempts=attempts+1,started_at=now(),locked_at=now(),updated_at=now() WHERE id=$1`, j.ID); err != nil {
+	if _, err = tx.Exec(ctx, `UPDATE media_jobs SET status='processing',attempts=attempts+1,started_at=COALESCE(started_at,now()),locked_at=now(),lease_until=now()+interval '15 minutes',updated_at=now() WHERE id=$1`, j.ID); err != nil {
 		return Job{}, err
 	}
 	if tenantID != uuid.Nil {
@@ -216,27 +256,37 @@ func (r Repository) ClaimJob(ctx context.Context) (Job, error) {
 	}
 	return j, nil
 }
-func (r Repository) FinishJob(ctx context.Context, j Job, hlsURI string, storageBytes int64, errMsg string) error {
-	status := "completed"
-	if errMsg != "" {
-		status = "failed"
-	}
-	_, err := r.Pool.Exec(ctx, `UPDATE media_jobs SET status=$1,progress_percent=$2,error_message=$3,completed_at=now(),updated_at=now() WHERE id=$4`, status, func() int {
-		if status == "completed" {
-			return 100
-		}
-		return 0
-	}(), errMsg, j.ID)
+func (r Repository) FinishJob(ctx context.Context, j Job, hlsURI string, storageBytes int64, errMsg string, keepSource bool) error {
+	tx, err := r.Pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
-	if status == "completed" {
-		_, err = r.Pool.Exec(ctx, `UPDATE storage_objects SET status='ready',updated_at=now() WHERE id=$1`, j.SourceObjectID)
-		_, err = r.Pool.Exec(ctx, `UPDATE assets SET hls_url=$1,status='valid',storage_bytes=storage_bytes+$2,updated_at=now() WHERE id=$3`, hlsURI, storageBytes, j.AssetID)
+	defer tx.Rollback(ctx)
+	if errMsg == "" {
+		delta := storageBytes
+		if !keepSource {
+			delta -= j.SourceBytes
+		}
+		if _, err = tx.Exec(ctx, `UPDATE media_jobs SET status='completed',progress_percent=100,error_message='',last_error='',completed_at=now(),lease_until=NULL,updated_at=now() WHERE id=$1 AND status='processing'`, j.ID); err != nil {
+			return err
+		}
+		if _, err = tx.Exec(ctx, `UPDATE storage_objects SET status='ready',updated_at=now() WHERE id=$1`, j.SourceObjectID); err != nil {
+			return err
+		}
+		if _, err = tx.Exec(ctx, `UPDATE assets SET hls_url=$1,status='valid',storage_bytes=storage_bytes+$2,updated_at=now() WHERE id=$3`, hlsURI, storageBytes, j.AssetID); err != nil {
+			return err
+		}
+		_, err = tx.Exec(ctx, `UPDATE storage_pools SET used_bytes=GREATEST(used_bytes+$1,0),updated_at=now() WHERE organization_id=$2 AND tenant_id IS NOT DISTINCT FROM $3`, delta, j.OrganizationID, j.TenantID)
 	} else {
-		_, err = r.Pool.Exec(ctx, `UPDATE storage_objects SET status='failed',updated_at=now() WHERE id=$1`, j.SourceObjectID)
+		if _, err = tx.Exec(ctx, `UPDATE media_jobs SET status=CASE WHEN attempts >= max_attempts THEN 'dead' ELSE 'queued' END,progress_percent=0,error_message=$1,last_error=$1,completed_at=CASE WHEN attempts >= max_attempts THEN now() ELSE NULL END,lease_until=NULL,updated_at=now() WHERE id=$2 AND status='processing'`, errMsg, j.ID); err != nil {
+			return err
+		}
+		_, err = tx.Exec(ctx, `UPDATE storage_objects SET status=CASE WHEN EXISTS (SELECT 1 FROM media_jobs WHERE id=$2 AND status='dead') THEN 'failed' ELSE 'uploaded' END,updated_at=now() WHERE id=$1`, j.SourceObjectID, j.ID)
 	}
-	return err
+	if err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 func (r Repository) AdjustUsage(ctx context.Context, org uuid.UUID, tenant *uuid.UUID, delta int64) error {
