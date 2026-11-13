@@ -94,6 +94,8 @@ services:
       MEDIA_TEMP_DIR: /tmp/vod2live-media
       FFMPEG_PATH: ffmpeg
       MEDIA_METRICS_ADDR: :9091
+      MEDIA_ABANDONED_UPLOAD_TTL_HOURS: ${MEDIA_ABANDONED_UPLOAD_TTL_HOURS:-24}
+      MEDIA_CLEANUP_INTERVAL_SECONDS: ${MEDIA_CLEANUP_INTERVAL_SECONDS:-900}
     depends_on:
       postgres:
         condition: service_healthy

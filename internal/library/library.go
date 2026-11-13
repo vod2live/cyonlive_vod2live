@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -13,6 +14,26 @@ import (
 )
 
 type Repository struct{ Pool *pgxpool.Pool }
+
+// ObjectDeleter is the minimal storage contract needed by abandoned-upload cleanup.
+type ObjectDeleter interface {
+	Delete(context.Context, string) error
+}
+
+type CleanupStats struct {
+	Scanned  int `json:"scanned"`
+	Deleted  int `json:"deleted"`
+	Failures int `json:"failures"`
+}
+
+type abandonedUpload struct {
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
+	TenantID       *uuid.UUID
+	AssetID        uuid.UUID
+	ObjectKey      string
+	ExpectedBytes  int64
+}
 
 var (
 	ErrJobNotFound = errors.New("media job not found")
@@ -221,6 +242,71 @@ func (r Repository) ListUploads(ctx context.Context, org uuid.UUID, libraryID *u
 		result = append(result, u)
 	}
 	return result, rows.Err()
+}
+
+// CleanupAbandonedUploads removes stale presigned-upload objects and releases
+// their reserved quota. Storage failures leave rows uploading for a later pass.
+func (r Repository) CleanupAbandonedUploads(ctx context.Context, before time.Time, deleter ObjectDeleter) (CleanupStats, error) {
+	rows, err := r.Pool.Query(ctx, `SELECT id,organization_id,tenant_id,asset_id,object_key,expected_size_bytes
+		FROM storage_objects WHERE status='uploading' AND updated_at < $1 ORDER BY updated_at LIMIT 100`, before)
+	if err != nil {
+		return CleanupStats{}, err
+	}
+	defer rows.Close()
+	var candidates []abandonedUpload
+	for rows.Next() {
+		var item abandonedUpload
+		if err := rows.Scan(&item.ID, &item.OrganizationID, &item.TenantID, &item.AssetID, &item.ObjectKey, &item.ExpectedBytes); err != nil {
+			return CleanupStats{}, err
+		}
+		candidates = append(candidates, item)
+	}
+	if err := rows.Err(); err != nil {
+		return CleanupStats{}, err
+	}
+	stats := CleanupStats{Scanned: len(candidates)}
+	for _, item := range candidates {
+		tx, err := r.Pool.Begin(ctx)
+		if err != nil {
+			stats.Failures++
+			continue
+		}
+		var current abandonedUpload
+		err = tx.QueryRow(ctx, `SELECT id,organization_id,tenant_id,asset_id,object_key,expected_size_bytes FROM storage_objects WHERE id=$1 AND status='uploading' AND updated_at < $2 FOR UPDATE`, item.ID, before).
+			Scan(&current.ID, &current.OrganizationID, &current.TenantID, &current.AssetID, &current.ObjectKey, &current.ExpectedBytes)
+		if errors.Is(err, pgx.ErrNoRows) {
+			_ = tx.Rollback(ctx)
+			continue
+		}
+		if err != nil {
+			_ = tx.Rollback(ctx)
+			stats.Failures++
+			continue
+		}
+		if err = deleter.Delete(ctx, current.ObjectKey); err != nil {
+			_ = tx.Rollback(ctx)
+			stats.Failures++
+			continue
+		}
+		_, err = tx.Exec(ctx, `UPDATE storage_objects SET status='deleted',updated_at=now() WHERE id=$1`, current.ID)
+		if err == nil {
+			_, err = tx.Exec(ctx, `UPDATE storage_pools SET reserved_bytes=GREATEST(reserved_bytes-$1,0),updated_at=now() WHERE organization_id=$2 AND tenant_id IS NOT DISTINCT FROM $3`, current.ExpectedBytes, current.OrganizationID, current.TenantID)
+		}
+		if err == nil {
+			_, err = tx.Exec(ctx, `UPDATE assets SET status='invalid',updated_at=now() WHERE id=$1 AND status='pending' AND hls_url=''`, current.AssetID)
+		}
+		if err == nil {
+			err = tx.Commit(ctx)
+		} else {
+			_ = tx.Rollback(ctx)
+		}
+		if err != nil {
+			stats.Failures++
+			continue
+		}
+		stats.Deleted++
+	}
+	return stats, nil
 }
 
 type Job struct {

@@ -47,7 +47,7 @@ func main() {
 		}
 	}()
 	log.Println("vod2live media worker started")
-	err = (media.Worker{Jobs: library.Repository{Pool: pool}, Storage: store, FFmpegPath: mediaCfg.FFmpegPath, TempDir: mediaCfg.MediaTempDir, Poll: time.Duration(mediaCfg.MediaPollSeconds) * time.Second, KeepSource: mediaCfg.KeepOriginal, Metrics: workerMetrics}).Run(ctx)
+	err = (media.Worker{Jobs: library.Repository{Pool: pool}, Storage: store, FFmpegPath: mediaCfg.FFmpegPath, TempDir: mediaCfg.MediaTempDir, Poll: time.Duration(mediaCfg.MediaPollSeconds) * time.Second, KeepSource: mediaCfg.KeepOriginal, Metrics: workerMetrics, AbandonedUploadTTL: time.Duration(mediaCfg.AbandonedUploadTTLHours) * time.Hour, CleanupInterval: time.Duration(mediaCfg.CleanupIntervalSeconds) * time.Second}).Run(ctx)
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_ = metricsServer.Shutdown(shutdownCtx)

@@ -359,6 +359,8 @@ GET /version
 
 O `media-worker` expõe `GET /metrics` em `MEDIA_METRICS_ADDR` (padrão `:9091`). O endpoint registra jobs concluídos e falhos, duração do processamento por resultado e o estado atual (`starting`, `idle`, `processing`, `stopping` ou `failed`). O Compose e o Prometheus já incluem esse alvo separado da API.
 
+Uploads que permanecem em `uploading` além de `MEDIA_ABANDONED_UPLOAD_TTL_HOURS` (padrão: 24 horas) são limpos periodicamente pelo `media-worker`. A rotina remove o objeto de quarentena, libera a quota reservada, marca o registro como `deleted` e invalida o asset pendente associado. O intervalo padrão é `MEDIA_CLEANUP_INTERVAL_SECONDS=900`; falhas de storage deixam o upload pendente para uma nova tentativa.
+
 O logging usa JSON estruturado via `slog` e inclui método, caminho, status, duração e `X-Request-ID`.
 
 As métricas Prometheus incluem:

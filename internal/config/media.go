@@ -14,6 +14,8 @@ type MediaConfig struct {
 	MediaPollSeconds int
 	KeepOriginal     bool
 	MetricsAddr      string
+	AbandonedUploadTTLHours int
+	CleanupIntervalSeconds int
 }
 
 func LoadMedia() MediaConfig {
@@ -29,6 +31,8 @@ func LoadMedia() MediaConfig {
 		MediaPollSeconds: intEnv("MEDIA_POLL_SECONDS", 5),
 		KeepOriginal:     boolEnv("MEDIA_KEEP_ORIGINAL", false),
 		MetricsAddr:      env("MEDIA_METRICS_ADDR", ":9091"),
+		AbandonedUploadTTLHours: intEnv("MEDIA_ABANDONED_UPLOAD_TTL_HOURS", 24),
+		CleanupIntervalSeconds: intEnv("MEDIA_CLEANUP_INTERVAL_SECONDS", 900),
 	}
 }
 

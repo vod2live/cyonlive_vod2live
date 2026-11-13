@@ -24,6 +24,8 @@ type Worker struct {
 	Poll       time.Duration
 	KeepSource bool
 	Metrics    *metrics.Metrics
+	AbandonedUploadTTL time.Duration
+	CleanupInterval time.Duration
 }
 
 func (w Worker) Run(ctx context.Context) error {
@@ -36,7 +38,23 @@ func (w Worker) Run(ctx context.Context) error {
 		w.Poll = 5 * time.Second
 	}
 	w.setState("idle")
+	if w.AbandonedUploadTTL <= 0 {
+		w.AbandonedUploadTTL = 24 * time.Hour
+	}
+	if w.CleanupInterval <= 0 {
+		w.CleanupInterval = 15 * time.Minute
+	}
+	lastCleanup := time.Time{}
 	for {
+		if time.Since(lastCleanup) >= w.CleanupInterval {
+			stats, cleanupErr := w.Jobs.CleanupAbandonedUploads(ctx, time.Now().Add(-w.AbandonedUploadTTL), w.Storage)
+			if cleanupErr != nil {
+				log.Printf("abandoned upload cleanup failed: %v", cleanupErr)
+			} else if stats.Deleted > 0 || stats.Failures > 0 {
+				log.Printf("abandoned upload cleanup scanned=%d deleted=%d failures=%d", stats.Scanned, stats.Deleted, stats.Failures)
+			}
+			lastCleanup = time.Now()
+		}
 		job, err := w.Jobs.ClaimJob(ctx)
 		if err == nil {
 			started := time.Now()
