@@ -120,6 +120,36 @@ func (r Repository) UserHasTenant(ctx context.Context, userID, organizationID, t
 	return allowed, err
 }
 
+func (r Repository) UserCanAccessAsset(ctx context.Context, userID, organizationID, assetID uuid.UUID) (bool, error) {
+	var allowed bool
+	err := r.Pool.QueryRow(ctx, `SELECT EXISTS(
+		SELECT 1 FROM assets a
+		WHERE a.id=$1 AND a.organization_id=$2
+		AND (a.tenant_id IS NULL OR EXISTS(SELECT 1 FROM tenant_memberships tm WHERE tm.tenant_id=a.tenant_id AND tm.organization_id=a.organization_id AND tm.user_id=$3))
+	)`, assetID, organizationID, userID).Scan(&allowed)
+	return allowed, err
+}
+
+func (r Repository) UserCanAccessChannel(ctx context.Context, userID, organizationID, channelID uuid.UUID) (bool, error) {
+	var allowed bool
+	err := r.Pool.QueryRow(ctx, `SELECT EXISTS(
+		SELECT 1 FROM channels c
+		WHERE c.id=$1 AND c.organization_id=$2
+		AND (c.tenant_id IS NULL OR EXISTS(SELECT 1 FROM tenant_memberships tm WHERE tm.tenant_id=c.tenant_id AND tm.organization_id=c.organization_id AND tm.user_id=$3))
+	)`, channelID, organizationID, userID).Scan(&allowed)
+	return allowed, err
+}
+
+func (r Repository) UserCanAccessSchedule(ctx context.Context, userID, organizationID, scheduleID uuid.UUID) (bool, error) {
+	var allowed bool
+	err := r.Pool.QueryRow(ctx, `SELECT EXISTS(
+		SELECT 1 FROM schedule_items s JOIN channels c ON c.id=s.channel_id AND c.organization_id=s.organization_id
+		WHERE s.id=$1 AND s.organization_id=$2
+		AND (c.tenant_id IS NULL OR EXISTS(SELECT 1 FROM tenant_memberships tm WHERE tm.tenant_id=c.tenant_id AND tm.organization_id=c.organization_id AND tm.user_id=$3))
+	)`, scheduleID, organizationID, userID).Scan(&allowed)
+	return allowed, err
+}
+
 func (r Repository) CreateOrganization(ctx context.Context, userID uuid.UUID, name, slug string) (Organization, error) {
 	tx, err := r.Pool.Begin(ctx)
 	if err != nil {

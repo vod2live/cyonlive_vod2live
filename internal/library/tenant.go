@@ -26,9 +26,20 @@ func (r Repository) CreateTenant(ctx context.Context, org uuid.UUID, name, slug 
 	return t, err
 }
 
-func (r Repository) AddTenantMember(ctx context.Context, org, tenant, user uuid.UUID) error {
+func (r Repository) AddTenantMember(ctx context.Context, org, tenant, user uuid.UUID, role string) error {
+	if role == "" {
+		role = "membro"
+	}
 	_, err := r.Pool.Exec(ctx, `INSERT INTO tenant_memberships(tenant_id,organization_id,user_id,role)
-		VALUES($1,$2,$3,'administrador') ON CONFLICT (tenant_id,user_id) DO NOTHING`, tenant, org, user)
+		VALUES($1,$2,$3,$4) ON CONFLICT (tenant_id,user_id) DO UPDATE SET role=EXCLUDED.role`, tenant, org, user, role)
+	return err
+}
+
+func (r Repository) RemoveTenantMember(ctx context.Context, org, tenant, user uuid.UUID) error {
+	result, err := r.Pool.Exec(ctx, `DELETE FROM tenant_memberships WHERE organization_id=$1 AND tenant_id=$2 AND user_id=$3`, org, tenant, user)
+	if err == nil && result.RowsAffected() == 0 {
+		return fmt.Errorf("tenant member not found")
+	}
 	return err
 }
 

@@ -238,6 +238,8 @@ Canais, ativos e itens da grade são isolados por organização. As consultas HT
 
 Operações com `tenant_id` exigem associação explícita do usuário em `tenant_memberships`; pertencer à organização, por si só, não autoriza acessar a biblioteca de um tenant. A migração `005_production_hardening.sql` faz o backfill inicial para administradores existentes, e o criador de um tenant recebe sua associação automaticamente.
 
+Administradores gerenciam as associações por tenant através de `POST /v1/tenants/{tenantID}/members` e `DELETE /v1/tenants/{tenantID}/members/{userID}`. Consultas de asset, canal, programação, manifest e playback também revalidam o escopo do usuário, e não dependem somente do `organization_id` do token.
+
 Operações de escrita autenticadas registram ator, organização, ação, recurso, status HTTP e request ID na tabela de auditoria.
 
 ## Ingestão HLS e SSRF
@@ -378,6 +380,8 @@ As migrações são reaplicáveis e podem ser verificadas com:
 make verify-migrations
 ```
 
+Em ambientes persistentes, use `make migrate`. O executor adquire um advisory lock no PostgreSQL, aplica os arquivos em ordem lexicográfica, registra a versão e o SHA-256 em `schema_migrations` e interrompe a execução se um arquivo já aplicado tiver sido alterado.
+
 O runbook de recuperação, RPO/RTO e rollback está em [`deployments/staging/RUNBOOK.md`](deployments/staging/RUNBOOK.md).
 
 Objetivos operacionais documentados:
@@ -401,6 +405,7 @@ Endpoints adicionados:
 GET  /v1/libraries
 POST /v1/libraries
 GET  /v1/storage/quota
+GET  /v1/media/jobs?tenant_id={tenantID}
 GET  /v1/uploads?library_id={libraryID}
 POST /v1/libraries/{libraryID}/uploads
 POST /v1/uploads/{uploadID}/complete
@@ -414,6 +419,8 @@ O upload reserva quota antes de gerar a URL pré-assinada. Ao ser confirmado, cr
 Assets de bibliotecas privadas carregam o `tenant_id` da biblioteca. A API e as consultas de programação permitem conteúdo privado somente quando o `tenant_id` do canal coincide; bibliotecas compartilhadas da organização têm `tenant_id` nulo e podem ser usadas por qualquer tenant daquela organização. A API exige associação do usuário ao tenant para criar bibliotecas, canais, uploads e consultar quota/conteúdo privado. Uploads são limitados a 20 GiB e tipos de mídia suportados; o tamanho real é conferido no storage contra a reserva antes do job ser criado.
 
 O Compose local inclui `minio` e `media-worker`. Para produção, use bucket privado, credenciais via secret manager, limites de CPU/memória no worker e políticas de retenção para originais, temporários e HLS publicado.
+
+`GET /v1/media/jobs` retorna contagens de jobs `queued`, `processing`, `completed`, `failed` e `dead`, permitindo alertas e acompanhamento por organização ou tenant.
 
 ## Staging e CDN
 

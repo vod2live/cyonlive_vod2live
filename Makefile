@@ -1,6 +1,6 @@
 APP=vod2live
 
-.PHONY: run test fmt compose-up compose-down e2e contract load-test playback-load-test ha-smoke verify-migrations db-backup db-verify-backup db-restore
+.PHONY: run test fmt compose-up compose-down e2e contract load-test playback-load-test ha-smoke migrate verify-migrations db-backup db-verify-backup db-restore
 
 run:
 	go run ./cmd/api
@@ -31,6 +31,9 @@ playback-load-test:
 
 ha-smoke:
 	scripts/ha-smoke.sh
+
+migrate:
+	scripts/migrate.sh
 
 verify-migrations:
 	scripts/verify-migrations.sh

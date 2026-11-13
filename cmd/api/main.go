@@ -122,8 +122,11 @@ func main() {
 			api.Post("/organizations", identityHandler.CreateOrganization)
 			api.Get("/tenants", libraryHandler.ListTenants)
 			api.With(auth.RequireRoles(auth.RoleAdmin)).Post("/tenants", libraryHandler.CreateTenant)
+			api.With(auth.RequireRoles(auth.RoleAdmin)).Post("/tenants/{tenantID}/members", libraryHandler.AddTenantMember)
+			api.With(auth.RequireRoles(auth.RoleAdmin)).Delete("/tenants/{tenantID}/members/{userID}", libraryHandler.RemoveTenantMember)
 			api.Get("/libraries", libraryHandler.List)
 			api.Get("/uploads", libraryHandler.ListUploads)
+			api.Get("/media/jobs", libraryHandler.JobStats)
 			api.With(auth.RequireRoles(auth.RoleAdmin, auth.RoleEditor)).Post("/libraries", libraryHandler.Create)
 			api.Get("/storage/quota", libraryHandler.Quota)
 			api.With(auth.RequireRoles(auth.RoleAdmin)).Post("/storage/quota", libraryHandler.SetQuota)
@@ -139,24 +142,24 @@ func main() {
 			api.With(auth.RequireRoles(auth.RoleAdmin)).Delete("/teams/{teamID}/members/{userID}", identityHandler.RemoveTeamMember)
 
 			api.With(auth.RequireRoles(auth.RoleAdmin, auth.RoleEditor)).Post("/assets", createAsset(assets))
-			api.With(auth.RequireRoles(auth.RoleAdmin, auth.RoleEditor)).Get("/review/assets", reviewQueue(assets))
-			api.With(auth.RequireRoles(auth.RoleAdmin, auth.RoleEditor)).Post("/assets/{id}/review", reviewAsset(assets))
-			api.With(auth.RequireRoles(auth.RoleAdmin, auth.RoleEditor)).Get("/assets/{id}/review/history", reviewHistory(assets))
-			api.Get("/assets/{id}", getAsset(assets))
-			api.With(auth.RequireRoles(auth.RoleAdmin, auth.RoleEditor)).Post("/assets/{id}/validate", validateAsset(assets))
+			api.With(auth.RequireRoles(auth.RoleAdmin, auth.RoleEditor)).Get("/review/assets", reviewQueue(assets, identities))
+			api.With(auth.RequireRoles(auth.RoleAdmin, auth.RoleEditor)).Post("/assets/{id}/review", reviewAsset(assets, identities))
+			api.With(auth.RequireRoles(auth.RoleAdmin, auth.RoleEditor)).Get("/assets/{id}/review/history", reviewHistory(assets, identities))
+			api.Get("/assets/{id}", getAsset(assets, identities))
+			api.With(auth.RequireRoles(auth.RoleAdmin, auth.RoleEditor)).Post("/assets/{id}/validate", validateAsset(assets, identities))
 			api.With(auth.RequireRoles(auth.RoleAdmin, auth.RoleEditor)).Post("/channels", createChannel(channels, identities))
-			api.Get("/channels", listChannels(channels))
-			api.Get("/channels/{id}", getChannel(channels))
-			api.With(auth.RequireRoles(auth.RoleAdmin, auth.RoleOperator)).Post("/channels/{id}/start", updateChannelStatus(channels, "running"))
-			api.With(auth.RequireRoles(auth.RoleAdmin, auth.RoleOperator)).Post("/channels/{id}/stop", updateChannelStatus(channels, "stopped"))
-			api.Get("/channels/{id}/status", channelStatus(channels, playoutStore))
-			api.Get("/channels/{id}/master.m3u8", masterManifest(channels, manifests))
-			api.Get("/channels/{id}/media/{variant}.m3u8", mediaManifest(channels, manifests))
-			api.With(auth.RequireRoles(auth.RoleAdmin, auth.RoleOperator)).Post("/channels/{id}/playback", issuePlaybackLink(channels, playbackSigner))
-			api.With(auth.RequireRoles(auth.RoleAdmin, auth.RoleEditor)).Post("/channels/{id}/schedule", createScheduleItem(channels, assets, schedules))
-			api.Get("/channels/{id}/schedule", listSchedule(channels, schedules))
-			api.With(auth.RequireRoles(auth.RoleAdmin, auth.RoleEditor)).Patch("/schedule/{id}", updateScheduleItem(schedules))
-			api.With(auth.RequireRoles(auth.RoleAdmin, auth.RoleEditor)).Delete("/schedule/{id}", deleteScheduleItem(schedules))
+			api.Get("/channels", listChannels(channels, identities))
+			api.Get("/channels/{id}", getChannel(channels, identities))
+			api.With(auth.RequireRoles(auth.RoleAdmin, auth.RoleOperator)).Post("/channels/{id}/start", updateChannelStatus(channels, identities, "running"))
+			api.With(auth.RequireRoles(auth.RoleAdmin, auth.RoleOperator)).Post("/channels/{id}/stop", updateChannelStatus(channels, identities, "stopped"))
+			api.Get("/channels/{id}/status", channelStatus(channels, identities, playoutStore))
+			api.Get("/channels/{id}/master.m3u8", masterManifest(channels, identities, manifests))
+			api.Get("/channels/{id}/media/{variant}.m3u8", mediaManifest(channels, identities, manifests))
+			api.With(auth.RequireRoles(auth.RoleAdmin, auth.RoleOperator)).Post("/channels/{id}/playback", issuePlaybackLink(channels, identities, playbackSigner))
+			api.With(auth.RequireRoles(auth.RoleAdmin, auth.RoleEditor)).Post("/channels/{id}/schedule", createScheduleItem(channels, assets, identities, schedules))
+			api.Get("/channels/{id}/schedule", listSchedule(channels, identities, schedules))
+			api.With(auth.RequireRoles(auth.RoleAdmin, auth.RoleEditor)).Patch("/schedule/{id}", updateScheduleItem(identities, schedules))
+			api.With(auth.RequireRoles(auth.RoleAdmin, auth.RoleEditor)).Delete("/schedule/{id}", deleteScheduleItem(identities, schedules))
 		})
 	})
 	server := &http.Server{Addr: cfg.HTTPAddr, Handler: r, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 60 * time.Second}
@@ -203,7 +206,7 @@ func createAsset(repo asset.PostgresRepository) http.HandlerFunc {
 		writeJSON(w, 201, item)
 	}
 }
-func getAsset(repo asset.PostgresRepository) http.HandlerFunc {
+func getAsset(repo asset.PostgresRepository, access identity.Repository) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id, err := uuid.Parse(chi.URLParam(r, "id"))
 		if err != nil {
@@ -213,6 +216,10 @@ func getAsset(repo asset.PostgresRepository) http.HandlerFunc {
 		principal, ok := auth.PrincipalFrom(r.Context())
 		if !ok {
 			http.Error(w, "não autorizado", http.StatusUnauthorized)
+			return
+		}
+		if allowed, accessErr := access.UserCanAccessAsset(r.Context(), principal.UserID, principal.OrganizationID, id); accessErr != nil || !allowed {
+			http.Error(w, "asset não encontrado", http.StatusNotFound)
 			return
 		}
 		item, err := repo.FindByIDInOrg(r.Context(), principal.OrganizationID, id)
@@ -223,7 +230,7 @@ func getAsset(repo asset.PostgresRepository) http.HandlerFunc {
 		writeJSON(w, 200, item)
 	}
 }
-func validateAsset(repo asset.PostgresRepository) http.HandlerFunc {
+func validateAsset(repo asset.PostgresRepository, access identity.Repository) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id, err := uuid.Parse(chi.URLParam(r, "id"))
 		if err != nil {
@@ -233,6 +240,10 @@ func validateAsset(repo asset.PostgresRepository) http.HandlerFunc {
 		principal, ok := auth.PrincipalFrom(r.Context())
 		if !ok {
 			http.Error(w, "não autorizado", http.StatusUnauthorized)
+			return
+		}
+		if allowed, accessErr := access.UserCanAccessAsset(r.Context(), principal.UserID, principal.OrganizationID, id); accessErr != nil || !allowed {
+			http.Error(w, "asset não encontrado", http.StatusNotFound)
 			return
 		}
 		item, err := repo.FindByIDInOrg(r.Context(), principal.OrganizationID, id)
@@ -252,7 +263,7 @@ func validateAsset(repo asset.PostgresRepository) http.HandlerFunc {
 	}
 }
 
-func reviewQueue(repo asset.PostgresRepository) http.HandlerFunc {
+func reviewQueue(repo asset.PostgresRepository, access identity.Repository) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		principal, ok := auth.PrincipalFrom(r.Context())
 		if !ok {
@@ -264,11 +275,17 @@ func reviewQueue(repo asset.PostgresRepository) http.HandlerFunc {
 			http.Error(w, "erro ao consultar fila de revisão", http.StatusInternalServerError)
 			return
 		}
-		writeJSON(w, http.StatusOK, items)
+		filtered := items[:0]
+		for _, item := range items {
+			if allowed, accessErr := access.UserCanAccessAsset(r.Context(), principal.UserID, principal.OrganizationID, item.ID); accessErr == nil && allowed {
+				filtered = append(filtered, item)
+			}
+		}
+		writeJSON(w, http.StatusOK, filtered)
 	}
 }
 
-func reviewAsset(repo asset.PostgresRepository) http.HandlerFunc {
+func reviewAsset(repo asset.PostgresRepository, access identity.Repository) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id, err := uuid.Parse(chi.URLParam(r, "id"))
 		if err != nil {
@@ -278,6 +295,10 @@ func reviewAsset(repo asset.PostgresRepository) http.HandlerFunc {
 		principal, ok := auth.PrincipalFrom(r.Context())
 		if !ok {
 			http.Error(w, "não autorizado", http.StatusUnauthorized)
+			return
+		}
+		if allowed, accessErr := access.UserCanAccessAsset(r.Context(), principal.UserID, principal.OrganizationID, id); accessErr != nil || !allowed {
+			http.Error(w, "asset não encontrado", http.StatusNotFound)
 			return
 		}
 		var req struct {
@@ -305,7 +326,7 @@ func reviewAsset(repo asset.PostgresRepository) http.HandlerFunc {
 	}
 }
 
-func reviewHistory(repo asset.PostgresRepository) http.HandlerFunc {
+func reviewHistory(repo asset.PostgresRepository, access identity.Repository) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		principal, ok := auth.PrincipalFrom(r.Context())
 		if !ok {
@@ -315,6 +336,10 @@ func reviewHistory(repo asset.PostgresRepository) http.HandlerFunc {
 		id, err := uuid.Parse(chi.URLParam(r, "id"))
 		if err != nil {
 			http.Error(w, "id inválido", http.StatusBadRequest)
+			return
+		}
+		if allowed, accessErr := access.UserCanAccessAsset(r.Context(), principal.UserID, principal.OrganizationID, id); accessErr != nil || !allowed {
+			http.Error(w, "asset não encontrado", http.StatusNotFound)
 			return
 		}
 		if _, err = repo.FindByIDInOrg(r.Context(), principal.OrganizationID, id); err != nil {
@@ -374,7 +399,20 @@ func createChannel(repo channel.PostgresRepository, tenantAccess interface {
 		writeJSON(w, 201, item)
 	}
 }
-func listChannels(repo channel.PostgresRepository) http.HandlerFunc {
+func checkChannelAccess(w http.ResponseWriter, r *http.Request, access identity.Repository, principal auth.Principal, channelID uuid.UUID) bool {
+	allowed, err := access.UserCanAccessChannel(r.Context(), principal.UserID, principal.OrganizationID, channelID)
+	if err != nil {
+		http.Error(w, "falha ao validar acesso ao canal", http.StatusInternalServerError)
+		return false
+	}
+	if !allowed {
+		http.Error(w, "canal não encontrado", http.StatusNotFound)
+		return false
+	}
+	return true
+}
+
+func listChannels(repo channel.PostgresRepository, access identity.Repository) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		principal, ok := auth.PrincipalFrom(r.Context())
 		if !ok {
@@ -386,10 +424,21 @@ func listChannels(repo channel.PostgresRepository) http.HandlerFunc {
 			http.Error(w, "erro ao listar canais", 500)
 			return
 		}
-		writeJSON(w, 200, items)
+		filtered := items[:0]
+		for _, item := range items {
+			allowed, accessErr := access.UserCanAccessChannel(r.Context(), principal.UserID, principal.OrganizationID, item.ID)
+			if accessErr != nil {
+				http.Error(w, "falha ao validar acesso aos canais", http.StatusInternalServerError)
+				return
+			}
+			if allowed {
+				filtered = append(filtered, item)
+			}
+		}
+		writeJSON(w, 200, filtered)
 	}
 }
-func getChannel(repo channel.PostgresRepository) http.HandlerFunc {
+func getChannel(repo channel.PostgresRepository, access identity.Repository) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id, err := uuid.Parse(chi.URLParam(r, "id"))
 		if err != nil {
@@ -399,6 +448,9 @@ func getChannel(repo channel.PostgresRepository) http.HandlerFunc {
 		principal, ok := auth.PrincipalFrom(r.Context())
 		if !ok {
 			http.Error(w, "não autorizado", http.StatusUnauthorized)
+			return
+		}
+		if !checkChannelAccess(w, r, access, principal, id) {
 			return
 		}
 		item, err := repo.FindByIDInOrg(r.Context(), principal.OrganizationID, id)
@@ -410,7 +462,7 @@ func getChannel(repo channel.PostgresRepository) http.HandlerFunc {
 	}
 }
 
-func updateChannelStatus(repo channel.PostgresRepository, status string) http.HandlerFunc {
+func updateChannelStatus(repo channel.PostgresRepository, access identity.Repository, status string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id, err := uuid.Parse(chi.URLParam(r, "id"))
 		if err != nil {
@@ -420,6 +472,9 @@ func updateChannelStatus(repo channel.PostgresRepository, status string) http.Ha
 		principal, ok := auth.PrincipalFrom(r.Context())
 		if !ok {
 			http.Error(w, "não autorizado", http.StatusUnauthorized)
+			return
+		}
+		if !checkChannelAccess(w, r, access, principal, id) {
 			return
 		}
 		if _, err = repo.FindByIDInOrg(r.Context(), principal.OrganizationID, id); err != nil {
@@ -434,7 +489,7 @@ func updateChannelStatus(repo channel.PostgresRepository, status string) http.Ha
 	}
 }
 
-func channelStatus(repo channel.PostgresRepository, store playout.RedisStore) http.HandlerFunc {
+func channelStatus(repo channel.PostgresRepository, access identity.Repository, store playout.RedisStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id, err := uuid.Parse(chi.URLParam(r, "id"))
 		if err != nil {
@@ -444,6 +499,9 @@ func channelStatus(repo channel.PostgresRepository, store playout.RedisStore) ht
 		principal, ok := auth.PrincipalFrom(r.Context())
 		if !ok {
 			http.Error(w, "não autorizado", http.StatusUnauthorized)
+			return
+		}
+		if !checkChannelAccess(w, r, access, principal, id) {
 			return
 		}
 		item, err := repo.FindByIDInOrg(r.Context(), principal.OrganizationID, id)
@@ -467,7 +525,7 @@ type scheduleRequest struct {
 	Position int        `json:"position"`
 }
 
-func createScheduleItem(channels channel.PostgresRepository, assets asset.PostgresRepository, repo schedule.PostgresRepository) http.HandlerFunc {
+func createScheduleItem(channels channel.PostgresRepository, assets asset.PostgresRepository, access identity.Repository, repo schedule.PostgresRepository) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		principal, ok := auth.PrincipalFrom(r.Context())
 		if !ok {
@@ -477,6 +535,9 @@ func createScheduleItem(channels channel.PostgresRepository, assets asset.Postgr
 		channelID, err := uuid.Parse(chi.URLParam(r, "id"))
 		if err != nil {
 			http.Error(w, "id de canal inválido", 400)
+			return
+		}
+		if !checkChannelAccess(w, r, access, principal, channelID) {
 			return
 		}
 		channelItem, findErr := channels.FindByIDInOrg(r.Context(), principal.OrganizationID, channelID)
@@ -514,7 +575,7 @@ func createScheduleItem(channels channel.PostgresRepository, assets asset.Postgr
 		writeJSON(w, 201, item)
 	}
 }
-func listSchedule(channels channel.PostgresRepository, repo schedule.PostgresRepository) http.HandlerFunc {
+func listSchedule(channels channel.PostgresRepository, access identity.Repository, repo schedule.PostgresRepository) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		principal, ok := auth.PrincipalFrom(r.Context())
 		if !ok {
@@ -524,6 +585,9 @@ func listSchedule(channels channel.PostgresRepository, repo schedule.PostgresRep
 		id, err := uuid.Parse(chi.URLParam(r, "id"))
 		if err != nil {
 			http.Error(w, "id inválido", 400)
+			return
+		}
+		if !checkChannelAccess(w, r, access, principal, id) {
 			return
 		}
 		if _, err := channels.FindByIDInOrg(r.Context(), principal.OrganizationID, id); err != nil {
@@ -546,7 +610,7 @@ type scheduleUpdateRequest struct {
 	Enabled  bool       `json:"enabled"`
 }
 
-func updateScheduleItem(repo schedule.PostgresRepository) http.HandlerFunc {
+func updateScheduleItem(access identity.Repository, repo schedule.PostgresRepository) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		principal, ok := auth.PrincipalFrom(r.Context())
 		if !ok {
@@ -556,6 +620,10 @@ func updateScheduleItem(repo schedule.PostgresRepository) http.HandlerFunc {
 		id, err := uuid.Parse(chi.URLParam(r, "id"))
 		if err != nil {
 			http.Error(w, "id inválido", 400)
+			return
+		}
+		if allowed, accessErr := access.UserCanAccessSchedule(r.Context(), principal.UserID, principal.OrganizationID, id); accessErr != nil || !allowed {
+			http.Error(w, "item não encontrado", http.StatusNotFound)
 			return
 		}
 		var req scheduleUpdateRequest
@@ -579,7 +647,7 @@ func updateScheduleItem(repo schedule.PostgresRepository) http.HandlerFunc {
 	}
 }
 
-func deleteScheduleItem(repo schedule.PostgresRepository) http.HandlerFunc {
+func deleteScheduleItem(access identity.Repository, repo schedule.PostgresRepository) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		principal, ok := auth.PrincipalFrom(r.Context())
 		if !ok {
@@ -589,6 +657,10 @@ func deleteScheduleItem(repo schedule.PostgresRepository) http.HandlerFunc {
 		id, err := uuid.Parse(chi.URLParam(r, "id"))
 		if err != nil {
 			http.Error(w, "id inválido", 400)
+			return
+		}
+		if allowed, accessErr := access.UserCanAccessSchedule(r.Context(), principal.UserID, principal.OrganizationID, id); accessErr != nil || !allowed {
+			http.Error(w, "item não encontrado", http.StatusNotFound)
 			return
 		}
 		if err = repo.Delete(r.Context(), principal.OrganizationID, id); err != nil {
@@ -603,7 +675,7 @@ func deleteScheduleItem(repo schedule.PostgresRepository) http.HandlerFunc {
 	}
 }
 
-func masterManifest(channels channel.PostgresRepository, service manifest.Service) http.HandlerFunc {
+func masterManifest(channels channel.PostgresRepository, access identity.Repository, service manifest.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		principal, ok := auth.PrincipalFrom(r.Context())
 		if !ok {
@@ -613,6 +685,9 @@ func masterManifest(channels channel.PostgresRepository, service manifest.Servic
 		id, err := uuid.Parse(chi.URLParam(r, "id"))
 		if err != nil {
 			http.Error(w, "id inválido", 400)
+			return
+		}
+		if !checkChannelAccess(w, r, access, principal, id) {
 			return
 		}
 		if _, err := channels.FindByIDInOrg(r.Context(), principal.OrganizationID, id); err != nil {
@@ -628,7 +703,7 @@ func masterManifest(channels channel.PostgresRepository, service manifest.Servic
 		w.Write(body)
 	}
 }
-func mediaManifest(channels channel.PostgresRepository, service manifest.Service) http.HandlerFunc {
+func mediaManifest(channels channel.PostgresRepository, access identity.Repository, service manifest.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		principal, ok := auth.PrincipalFrom(r.Context())
 		if !ok {
@@ -638,6 +713,9 @@ func mediaManifest(channels channel.PostgresRepository, service manifest.Service
 		id, err := uuid.Parse(chi.URLParam(r, "id"))
 		if err != nil {
 			http.Error(w, "id inválido", 400)
+			return
+		}
+		if !checkChannelAccess(w, r, access, principal, id) {
 			return
 		}
 		if _, err := channels.FindByIDInOrg(r.Context(), principal.OrganizationID, id); err != nil {
@@ -660,7 +738,7 @@ func writeJSON(w http.ResponseWriter, status int, value any) {
 	_ = json.NewEncoder(w).Encode(value)
 }
 
-func issuePlaybackLink(repo channel.PostgresRepository, signer *playback.Signer) http.HandlerFunc {
+func issuePlaybackLink(repo channel.PostgresRepository, access identity.Repository, signer *playback.Signer) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id, err := uuid.Parse(chi.URLParam(r, "id"))
 		if err != nil {
@@ -670,6 +748,9 @@ func issuePlaybackLink(repo channel.PostgresRepository, signer *playback.Signer)
 		principal, ok := auth.PrincipalFrom(r.Context())
 		if !ok {
 			http.Error(w, "não autorizado", http.StatusUnauthorized)
+			return
+		}
+		if !checkChannelAccess(w, r, access, principal, id) {
 			return
 		}
 		if _, err = repo.FindByIDInOrg(r.Context(), principal.OrganizationID, id); err != nil {

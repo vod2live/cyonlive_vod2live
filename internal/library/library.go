@@ -224,6 +224,25 @@ type Job struct {
 	SourceBytes                                 int64
 }
 
+type JobStats struct {
+	Queued     int64 `json:"queued"`
+	Processing int64 `json:"processing"`
+	Completed  int64 `json:"completed"`
+	Failed     int64 `json:"failed"`
+	Dead       int64 `json:"dead"`
+}
+
+func (r Repository) JobStats(ctx context.Context, org uuid.UUID, tenant *uuid.UUID) (JobStats, error) {
+	var stats JobStats
+	err := r.Pool.QueryRow(ctx, `SELECT
+		COUNT(*) FILTER (WHERE status='queued'), COUNT(*) FILTER (WHERE status='processing'),
+		COUNT(*) FILTER (WHERE status='completed'), COUNT(*) FILTER (WHERE status='failed'),
+		COUNT(*) FILTER (WHERE status='dead')
+		FROM media_jobs WHERE organization_id=$1 AND tenant_id IS NOT DISTINCT FROM COALESCE($2,tenant_id)`, org, tenant).
+		Scan(&stats.Queued, &stats.Processing, &stats.Completed, &stats.Failed, &stats.Dead)
+	return stats, err
+}
+
 func (r Repository) ClaimJob(ctx context.Context) (Job, error) {
 	tx, err := r.Pool.Begin(ctx)
 	if err != nil {

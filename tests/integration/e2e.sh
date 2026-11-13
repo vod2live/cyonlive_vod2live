@@ -20,6 +20,21 @@ inspection=$(curl --fail --silent -X POST "$BASE_URL/v1/assets/$asset_id/validat
 printf '%s' "$inspection" | grep -q '"duration_ms":6000'
 channel=$(curl --fail --silent -X POST "$BASE_URL/v1/channels" -H "$AUTH_HEADER" -H 'Content-Type: application/json' -d '{"name":"Canal E2E","slug":"canal-e2e"}')
 channel_id=$(printf '%s' "$channel" | json_value id)
+tenant_a=$(curl --fail --silent -X POST "$BASE_URL/v1/tenants" -H "$AUTH_HEADER" -H 'Content-Type: application/json' -d '{"name":"Tenant A E2E","slug":"tenant-a-e2e"}')
+tenant_a_id=$(printf '%s' "$tenant_a" | json_value id)
+tenant_b=$(curl --fail --silent -X POST "$BASE_URL/v1/tenants" -H "$AUTH_HEADER" -H 'Content-Type: application/json' -d '{"name":"Tenant B E2E","slug":"tenant-b-e2e"}')
+tenant_b_id=$(printf '%s' "$tenant_b" | json_value id)
+tenant_editor=$(curl --fail --silent -X POST "$BASE_URL/v1/users" -H "$AUTH_HEADER" -H 'Content-Type: application/json' -d '{"email":"tenant-editor@example.com","password":"tenant-editor-phase14-password","role":"editor"}')
+tenant_editor_id=$(printf '%s' "$tenant_editor" | json_value id)
+curl --fail --silent -X POST "$BASE_URL/v1/tenants/$tenant_a_id/members" -H "$AUTH_HEADER" -H 'Content-Type: application/json' -d "{\"user_id\":\"$tenant_editor_id\",\"role\":\"editor\"}" >/dev/null
+tenant_b_channel=$(curl --fail --silent -X POST "$BASE_URL/v1/channels" -H "$AUTH_HEADER" -H 'Content-Type: application/json' -d "{\"name\":\"Canal Tenant B\",\"slug\":\"canal-tenant-b\",\"tenant_id\":\"$tenant_b_id\"}")
+tenant_b_channel_id=$(printf '%s' "$tenant_b_channel" | json_value id)
+tenant_editor_login=$(curl --fail --silent -X POST "$BASE_URL/v1/auth/login" -H 'Content-Type: application/json' -d '{"email":"tenant-editor@example.com","password":"tenant-editor-phase14-password"}')
+TENANT_EDITOR_TOKEN=$(printf '%s' "$tenant_editor_login" | json_value access_token)
+if [ "$(curl --silent --output /dev/null --write-out '%{http_code}' -X POST "$BASE_URL/v1/channels" -H "Authorization: Bearer $TENANT_EDITOR_TOKEN" -H 'Content-Type: application/json' -d "{\"name\":\"Canal Tenant B Negado\",\"tenant_id\":\"$tenant_b_id\"}")" != "403" ]; then echo 'editor de tenant conseguiu criar canal de outro tenant' >&2; exit 1; fi
+if [ "$(curl --silent --output /dev/null --write-out '%{http_code}' "$BASE_URL/v1/channels/$tenant_b_channel_id" -H "Authorization: Bearer $TENANT_EDITOR_TOKEN")" != "404" ]; then echo 'editor de tenant conseguiu ler canal de outro tenant' >&2; exit 1; fi
+tenant_a_channel=$(curl --fail --silent -X POST "$BASE_URL/v1/channels" -H "Authorization: Bearer $TENANT_EDITOR_TOKEN" -H 'Content-Type: application/json' -d "{\"name\":\"Canal Tenant A\",\"tenant_id\":\"$tenant_a_id\"}")
+printf '%s' "$tenant_a_channel" | grep -q "\"tenant_id\":\"$tenant_a_id\""
 start=$(date -u -d '-1 minute' '+%Y-%m-%dT%H:%M:%SZ')
 item=$(curl --fail --silent -X POST "$BASE_URL/v1/channels/$channel_id/schedule" -H "$AUTH_HEADER" -H 'Content-Type: application/json' -d "{\"asset_id\":\"$asset_id\",\"starts_at\":\"$start\",\"position\":1}")
 item_id=$(printf '%s' "$item" | json_value id)

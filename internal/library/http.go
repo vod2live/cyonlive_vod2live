@@ -74,7 +74,7 @@ func (h Handler) CreateTenant(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "erro ao criar tenant", 422)
 		return
 	}
-	if err := h.Repo.AddTenantMember(r.Context(), p.OrganizationID, item.ID, p.UserID); err != nil {
+	if err := h.Repo.AddTenantMember(r.Context(), p.OrganizationID, item.ID, p.UserID, auth.RoleAdmin); err != nil {
 		http.Error(w, "erro ao associar administrador ao tenant", http.StatusInternalServerError)
 		return
 	}
@@ -109,6 +109,62 @@ func (h Handler) SetQuota(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	write(w, 200, q)
+}
+
+func (h Handler) AddTenantMember(w http.ResponseWriter, r *http.Request) {
+	p, ok := auth.PrincipalFrom(r.Context())
+	if !ok {
+		http.Error(w, "não autorizado", http.StatusUnauthorized)
+		return
+	}
+	tenantID, err := uuid.Parse(chi.URLParam(r, "tenantID"))
+	if err != nil {
+		http.Error(w, "tenant_id inválido", http.StatusBadRequest)
+		return
+	}
+	var req struct {
+		UserID uuid.UUID `json:"user_id"`
+		Role   string    `json:"role"`
+	}
+	if json.NewDecoder(r.Body).Decode(&req) != nil || req.UserID == uuid.Nil {
+		http.Error(w, "user_id é obrigatório", http.StatusBadRequest)
+		return
+	}
+	if req.Role == "" {
+		req.Role = "membro"
+	}
+	if req.Role != "administrador" && req.Role != "editor" && req.Role != "operador" && req.Role != "visualizador" && req.Role != "membro" {
+		http.Error(w, "role inválido", http.StatusBadRequest)
+		return
+	}
+	if err := h.Repo.AddTenantMember(r.Context(), p.OrganizationID, tenantID, req.UserID, req.Role); err != nil {
+		http.Error(w, "usuário ou tenant inválido", http.StatusUnprocessableEntity)
+		return
+	}
+	write(w, http.StatusCreated, map[string]any{"tenant_id": tenantID, "user_id": req.UserID, "role": req.Role})
+}
+
+func (h Handler) RemoveTenantMember(w http.ResponseWriter, r *http.Request) {
+	p, ok := auth.PrincipalFrom(r.Context())
+	if !ok {
+		http.Error(w, "não autorizado", http.StatusUnauthorized)
+		return
+	}
+	tenantID, err := uuid.Parse(chi.URLParam(r, "tenantID"))
+	userID, userErr := uuid.Parse(chi.URLParam(r, "userID"))
+	if err != nil || userErr != nil {
+		http.Error(w, "id inválido", http.StatusBadRequest)
+		return
+	}
+	if userID == p.UserID {
+		http.Error(w, "não é permitido remover a própria associação", http.StatusConflict)
+		return
+	}
+	if err := h.Repo.RemoveTenantMember(r.Context(), p.OrganizationID, tenantID, userID); err != nil {
+		http.Error(w, "membro não encontrado", http.StatusNotFound)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (h Handler) List(w http.ResponseWriter, r *http.Request) {
@@ -259,6 +315,33 @@ func (h Handler) ListUploads(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	write(w, http.StatusOK, filtered)
+}
+
+func (h Handler) JobStats(w http.ResponseWriter, r *http.Request) {
+	p, ok := auth.PrincipalFrom(r.Context())
+	if !ok {
+		http.Error(w, "não autorizado", http.StatusUnauthorized)
+		return
+	}
+	var tenant *uuid.UUID
+	if raw := r.URL.Query().Get("tenant_id"); raw != "" {
+		id, err := uuid.Parse(raw)
+		if err != nil {
+			http.Error(w, "tenant_id inválido", http.StatusBadRequest)
+			return
+		}
+		tenant = &id
+	}
+	if err := h.authorizeTenant(r.Context(), p, tenant); err != nil {
+		http.Error(w, "tenant não autorizado", http.StatusForbidden)
+		return
+	}
+	stats, err := h.Repo.JobStats(r.Context(), p.OrganizationID, tenant)
+	if err != nil {
+		http.Error(w, "erro ao consultar jobs", http.StatusInternalServerError)
+		return
+	}
+	write(w, http.StatusOK, stats)
 }
 
 func (h Handler) CompleteUpload(w http.ResponseWriter, r *http.Request) {
