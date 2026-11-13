@@ -30,7 +30,7 @@ func TestClaimJobConcurrentWorkersClaimJobOnce(t *testing.T) {
 	if err != nil {
 		t.Fatalf("connect test database: %v", err)
 	}
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	if err := pool.Ping(ctx); err != nil {
 		t.Fatalf("ping test database: %v", err)
 	}
