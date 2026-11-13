@@ -222,6 +222,23 @@ Papéis disponíveis:
 
 A alteração de papel ou remoção de associação tem efeito imediato porque a associação organizacional é consultada novamente durante as requisições protegidas.
 
+### Matriz de autorização
+
+As permissões de escrita são definidas em uma política declarativa por operação, aplicada pelo middleware antes do handler. O papel organizacional define a capacidade global; quando a operação informa um `tenant_id`, o handler também exige associação explícita do usuário àquele tenant. Portanto, ter um papel organizacional permitido não ignora o isolamento de tenant.
+
+| Operação | Administrador | Editor | Operador | Visualizador |
+|---|:---:|:---:|:---:|:---:|
+| Gerenciar tenants, usuários e equipes | sim | não | não | não |
+| Criar bibliotecas, uploads e concluir uploads | sim | sim | não | não |
+| Ajustar quota | sim | não | não | não |
+| Criar e validar assets | sim | sim | não | não |
+| Revisar assets | sim | sim | não | não |
+| Criar canais | sim | sim | não | não |
+| Iniciar/parar canais e emitir playback | sim | não | sim | não |
+| Criar, alterar e remover programação | sim | sim | não | não |
+
+Leituras são permitidas somente quando o recurso pertence à organização e, para recursos privados, quando o usuário está associado ao tenant. Um administrador organizacional não recebe acesso automático a um tenant privado sem essa associação. Alterações de papel ou remoção de associação são reavaliadas na próxima requisição e têm efeito imediato.
+
 ## Multi-tenancy
 
 A identidade é organizada em:
