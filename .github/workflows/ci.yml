@@ -63,9 +63,8 @@ jobs:
       - run: VOD2LIVE_TEST_DATABASE_URL='postgres://vod2live:vod2live@localhost:5432/vod2live?sslmode=disable' VOD2LIVE_TEST_MINIO_ENDPOINT='localhost:9000' VOD2LIVE_TEST_MINIO_ACCESS_KEY='test' VOD2LIVE_TEST_MINIO_SECRET_KEY='testpassword' go test ./internal/media -run '^TestWorkerFailurePersistsDeadJobAndObjectState$' -count=1
       - name: Export staging endpoints for integration tests
         run: |
-          compose=(docker compose --profile local -f docker-compose.yml -f deployments/staging/docker-compose.staging.yml)
-          api_id=$("${compose[@]}" ps -q api)
-          hls_id=$("${compose[@]}" ps -q hls-fixture)
+          api_id=$(docker ps --filter label=com.docker.compose.service=api --format '{{.ID}}' | head -n 1)
+          hls_id=$(docker ps --filter label=com.docker.compose.service=hls-fixture --format '{{.ID}}' | head -n 1)
           api_ip=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$api_id")
           hls_ip=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$hls_id")
           {
