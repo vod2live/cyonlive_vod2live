@@ -2,6 +2,7 @@
 set -eu
 BASE_URL="${BASE_URL:-http://localhost:8080}"
 API_KEY="${API_KEY:-phase2-local-key}"
+METRICS_API_KEY="${METRICS_API_KEY:-}"
 ADMIN_EMAIL="${PHASE14_ADMIN_EMAIL:-admin@example.com}"
 ADMIN_PASSWORD="${PHASE14_ADMIN_PASSWORD:-phase14-test-password}"
 headers=$(mktemp)
@@ -21,6 +22,6 @@ fi
 login=$(curl --fail --silent -X POST "$BASE_URL/v1/auth/login" -H 'Content-Type: application/json' -d "$login_body")
 TOKEN=$(printf '%s' "$login" | python3 -c 'import json,sys; print(json.load(sys.stdin)["access_token"])')
 curl --fail --silent -H "Authorization: Bearer $TOKEN" "$BASE_URL/v1/channels" >/dev/null
-curl --fail --silent "$BASE_URL/metrics" | grep -q 'vod2live_http_requests_total'
+curl --fail --silent -H "X-API-Key: $METRICS_API_KEY" "$BASE_URL/metrics" | grep -q 'vod2live_http_requests_total'
 curl --fail --silent "$BASE_URL/version" | grep -q '"version"'
 printf 'API contract checks passed\n'
