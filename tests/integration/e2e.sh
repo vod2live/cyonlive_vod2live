@@ -35,7 +35,7 @@ if [ "$(curl --silent --output /dev/null --write-out '%{http_code}' -X POST "$BA
 if [ "$(curl --silent --output /dev/null --write-out '%{http_code}' "$BASE_URL/v1/channels/$tenant_b_channel_id" -H "Authorization: Bearer $TENANT_EDITOR_TOKEN")" != "404" ]; then echo 'editor de tenant conseguiu ler canal de outro tenant' >&2; exit 1; fi
 tenant_a_channel=$(curl --fail --silent -X POST "$BASE_URL/v1/channels" -H "Authorization: Bearer $TENANT_EDITOR_TOKEN" -H 'Content-Type: application/json' -d "{\"name\":\"Canal Tenant A\",\"tenant_id\":\"$tenant_a_id\"}")
 printf '%s' "$tenant_a_channel" | grep -q "\"tenant_id\":\"$tenant_a_id\""
-start=$(date -u -d '-1 minute' '+%Y-%m-%dT%H:%M:%SZ')
+start=$(date -u -d '-1 second' '+%Y-%m-%dT%H:%M:%SZ')
 item=$(curl --fail --silent -X POST "$BASE_URL/v1/channels/$channel_id/schedule" -H "$AUTH_HEADER" -H 'Content-Type: application/json' -d "{\"asset_id\":\"$asset_id\",\"starts_at\":\"$start\",\"position\":1}")
 item_id=$(printf '%s' "$item" | json_value id)
 curl --fail --silent -X POST "$BASE_URL/v1/channels/$channel_id/start" -H "$AUTH_HEADER" >/dev/null
