@@ -16,13 +16,32 @@ jobs:
           go-version: '1.22'
       - run: go test ./...
       - run: docker compose config --quiet
-      - run: IMAGE_TAG=ci DATABASE_URL='postgres://test:test@db:5432/test' REDIS_ADDR=redis:6379 API_KEY=test AUTH_TOKEN_SECRET=test PLAYBACK_TOKEN_SECRET=test CORS_ALLOWED_ORIGIN=https://example.test MINIO_ENDPOINT=minio:9000 MINIO_ROOT_USER=test MINIO_ROOT_PASSWORD=test docker compose -f docker-compose.yml -f deployments/staging/docker-compose.staging.yml config --quiet
-      - run: VERSION=${GITHUB_REF_NAME} COMMIT=${GITHUB_SHA} BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ) docker compose build api playout
+      - run: IMAGE_REF=ghcr.io/vod2live/cyonlive_vod2live:ci DATABASE_URL='postgres://test:test@db:5432/test' REDIS_ADDR=redis:6379 API_KEY=test AUTH_TOKEN_SECRET=test PLAYBACK_TOKEN_SECRET=test CORS_ALLOWED_ORIGIN=https://example.test MINIO_ENDPOINT=minio:9000 MINIO_ROOT_USER=test MINIO_ROOT_PASSWORD=test docker compose -f docker-compose.yml -f deployments/staging/docker-compose.staging.yml config --quiet
+      - run: IMAGE_REF=ghcr.io/vod2live/cyonlive_vod2live:ci VERSION=${GITHUB_REF_NAME} COMMIT=${GITHUB_SHA} BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ) docker compose build api
       - run: docker compose build minio
       - run: docker compose up -d --wait --wait-timeout 120 postgres redis hls-fixture
       - run: ./scripts/verify-migrations.sh
       - run: VOD2LIVE_TEST_DATABASE_URL='postgres://vod2live:vod2live@localhost:5432/vod2live?sslmode=disable' go test ./internal/library -run '^TestClaimJobConcurrentWorkersClaimJobOnce$' -count=1
-      - run: docker compose up -d --wait --wait-timeout 120 api playout
+      - name: Start staging services from the shared image
+        env:
+          IMAGE_REF: ghcr.io/vod2live/cyonlive_vod2live:ci
+          DATABASE_URL: postgres://vod2live:vod2live@postgres:5432/vod2live?sslmode=disable
+          REDIS_ADDR: redis:6379
+          API_KEY: ci-test-api-key
+          AUTH_TOKEN_SECRET: ci-test-auth-token-secret
+          PLAYBACK_TOKEN_SECRET: ci-test-playback-token-secret
+          CORS_ALLOWED_ORIGIN: https://example.test
+          MINIO_ENDPOINT: minio:9000
+          MINIO_ROOT_USER: test
+          MINIO_ROOT_PASSWORD: test
+          MINIO_USE_SSL: "false"
+        run: |
+          docker compose --profile local -f docker-compose.yml -f deployments/staging/docker-compose.staging.yml \
+            up -d --wait --wait-timeout 120 postgres redis minio hls-fixture api playout media-worker
+          for service in api playout media-worker; do
+            docker compose --profile local -f docker-compose.yml -f deployments/staging/docker-compose.staging.yml \
+              exec -T "$service" sh -ec 'test "$(readlink /proc/1/exe)" = "$1"' _ "/usr/local/bin/service-$service"
+          done
       - run: VOD2LIVE_TEST_DATABASE_URL='postgres://vod2live:vod2live@localhost:5432/vod2live?sslmode=disable' VOD2LIVE_TEST_MINIO_ENDPOINT='localhost:9000' go test ./internal/media -run '^TestWorkerFailurePersistsDeadJobAndObjectState$' -count=1
       - run: ./tests/integration/e2e.sh
       - run: ./tests/integration/contract.sh

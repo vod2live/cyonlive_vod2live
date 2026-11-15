@@ -12,10 +12,11 @@ services:
     profiles: ["local"]
 
   api:
-    image: ${IMAGE_REPOSITORY:-ghcr.io/vod2live/cyonlive_vod2live}:${IMAGE_TAG:?IMAGE_TAG is required}
+    image: ${IMAGE_REF:?IMAGE_REF must reference the shared image by digest}
     build: !reset null
     ports: !reset []
     environment:
+      SERVICE: api
       APP_ENV: staging
       DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
       REDIS_ADDR: ${REDIS_ADDR:?REDIS_ADDR is required}
@@ -33,20 +34,20 @@ services:
     restart: unless-stopped
 
   playout:
-    image: ${IMAGE_REPOSITORY:-ghcr.io/vod2live/cyonlive_vod2live}:${IMAGE_TAG:?IMAGE_TAG is required}
-    build: !reset null
+    image: ${IMAGE_REF:?IMAGE_REF must reference the shared image by digest}
     environment:
+      SERVICE: playout
       DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
       REDIS_ADDR: ${REDIS_ADDR:?REDIS_ADDR is required}
     depends_on: !reset []
     restart: unless-stopped
 
   media-worker:
-    image: ${IMAGE_REPOSITORY:-ghcr.io/vod2live/cyonlive_vod2live}:${IMAGE_TAG:?IMAGE_TAG is required}
-    build: !reset null
+    image: ${IMAGE_REF:?IMAGE_REF must reference the shared image by digest}
     expose:
       - "9091"
     environment:
+      SERVICE: media-worker
       DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
       MINIO_ENDPOINT: ${MINIO_ENDPOINT:?MINIO_ENDPOINT is required}
       MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:?MINIO_ROOT_USER is required}

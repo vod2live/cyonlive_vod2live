@@ -10,10 +10,24 @@
 
 1. Validar CI verde, migrações reaplicáveis e dump verificável.
 2. Aplicar secrets no ambiente sem gravá-los no repositório.
-3. Executar `docker compose --env-file deployments/staging/.env -f deployments/staging/docker-compose.staging.yml --profile tools run --rm migration-runner` antes de iniciar a nova versão ou trocar o tráfego. O arquivo `.env` deve ser provisionado fora do Git a partir do secret manager; o processo usa `DATABASE_URL`, mantém o advisory lock na mesma conexão e recusa checksums alterados.
-4. Subir a nova versão em staging e executar E2E, contrato, load e HA smoke. O override de staging remove as dependências de containers locais; `DATABASE_URL`, `REDIS_ADDR` e `MINIO_ENDPOINT` devem apontar aos serviços externos.
-5. Fazer deploy rolling em produção.
-6. Confirmar `/readyz`, `/version`, métricas e playback assinado.
+3. Construir e publicar uma imagem única a partir do commit aprovado. A imagem contém `api`, `playout` e `media-worker`; `SERVICE` seleciona explicitamente o processo em runtime. Use o SHA do commit como tag de publicação e não reutilize tags mutáveis:
+
+   ```sh
+   COMMIT=$(git rev-parse HEAD)
+   IMAGE=ghcr.io/vod2live/cyonlive_vod2live:$COMMIT
+   docker build -f deployments/docker/Dockerfile \
+     --build-arg VERSION="$COMMIT" \
+     --build-arg COMMIT="$COMMIT" \
+     --build-arg BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+     -t "$IMAGE" .
+   docker push "$IMAGE"
+   ```
+
+   Após o push, obtenha o digest retornado pelo registro e configure `IMAGE_REF=ghcr.io/vod2live/cyonlive_vod2live@sha256:<digest>` no secret manager. O Compose usa o mesmo digest imutável para os três serviços.
+4. Executar `docker compose --env-file deployments/staging/.env -f deployments/staging/docker-compose.staging.yml --profile tools run --rm migration-runner` antes de iniciar a nova versão ou trocar o tráfego. O arquivo `.env` deve ser provisionado fora do Git a partir do secret manager; o processo usa `DATABASE_URL`, mantém o advisory lock na mesma conexão e recusa checksums alterados.
+5. Subir a nova versão em staging e executar E2E, contrato, load e HA smoke. O override de staging remove as dependências de containers locais; `DATABASE_URL`, `REDIS_ADDR` e `MINIO_ENDPOINT` devem apontar aos serviços externos.
+6. Fazer deploy rolling em produção.
+7. Confirmar `/readyz`, `/version`, métricas e playback assinado.
 
 ## Rollback
 
