@@ -17,15 +17,15 @@ import (
 )
 
 type Worker struct {
-	Jobs       library.Repository
-	Storage    *storage.Client
-	FFmpegPath string
-	TempDir    string
-	Poll       time.Duration
-	KeepSource bool
-	Metrics    *metrics.Metrics
+	Jobs               library.Repository
+	Storage            *storage.Client
+	FFmpegPath         string
+	TempDir            string
+	Poll               time.Duration
+	KeepSource         bool
+	Metrics            *metrics.Metrics
 	AbandonedUploadTTL time.Duration
-	CleanupInterval time.Duration
+	CleanupInterval    time.Duration
 }
 
 func (w Worker) Run(ctx context.Context) error {
@@ -59,9 +59,17 @@ func (w Worker) Run(ctx context.Context) error {
 		if err == nil {
 			started := time.Now()
 			w.setState("processing")
-			if err = w.process(ctx, job); err != nil {
+			jobCtx, stopHeartbeat := context.WithCancel(ctx)
+			heartbeatDone := make(chan struct{})
+			go w.renewLease(jobCtx, job, stopHeartbeat, heartbeatDone)
+			err = w.process(jobCtx, job)
+			stopHeartbeat()
+			<-heartbeatDone
+			if err != nil {
 				log.Printf("media job %s failed: %v", job.ID, err)
-				_ = w.Jobs.FinishJob(ctx, job, "", 0, err.Error(), w.KeepSource)
+				if finishErr := w.Jobs.FinishJob(ctx, job, "", 0, err.Error(), w.KeepSource); finishErr != nil {
+					log.Printf("media job %s finish failed: %v", job.ID, finishErr)
+				}
 				w.observeJob("failed", time.Since(started))
 			} else {
 				w.observeJob("completed", time.Since(started))
@@ -74,6 +82,24 @@ func (w Worker) Run(ctx context.Context) error {
 			w.setState("stopping")
 			return ctx.Err()
 		case <-time.After(w.Poll):
+		}
+	}
+}
+
+func (w Worker) renewLease(ctx context.Context, job library.Job, stop context.CancelFunc, done chan<- struct{}) {
+	defer close(done)
+	ticker := time.NewTicker(5 * time.Minute)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := w.Jobs.RenewJobLease(ctx, job); err != nil {
+				log.Printf("media job %s lease renewal failed: %v", job.ID, err)
+				stop()
+				return
+			}
 		}
 	}
 }

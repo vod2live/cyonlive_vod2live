@@ -36,8 +36,9 @@ type abandonedUpload struct {
 }
 
 var (
-	ErrJobNotFound = errors.New("media job not found")
-	ErrJobNotDead  = errors.New("media job is not dead")
+	ErrJobNotFound  = errors.New("media job not found")
+	ErrJobNotDead   = errors.New("media job is not dead")
+	ErrJobLeaseLost = errors.New("media job lease lost")
 )
 
 const MaxUploadBytes int64 = 20 << 30
@@ -311,10 +312,13 @@ func (r Repository) CleanupAbandonedUploads(ctx context.Context, before time.Tim
 
 type Job struct {
 	ID, OrganizationID, AssetID, SourceObjectID uuid.UUID
+	ClaimToken                                  uuid.UUID
 	TenantID                                    *uuid.UUID
 	ObjectKey, Bucket                           string
 	SourceBytes                                 int64
 }
+
+const mediaJobLease = 15 * time.Minute
 
 type JobStats struct {
 	Queued     int64 `json:"queued"`
@@ -336,12 +340,12 @@ func (r Repository) JobStats(ctx context.Context, org uuid.UUID, tenant *uuid.UU
 }
 
 type ReprocessedJob struct {
-	ID           uuid.UUID  `json:"id"`
-	TenantID     *uuid.UUID `json:"tenant_id,omitempty"`
-	Status       string     `json:"status"`
-	Attempts     int        `json:"attempts"`
-	MaxAttempts  int        `json:"max_attempts"`
-	LastError    string     `json:"last_error"`
+	ID          uuid.UUID  `json:"id"`
+	TenantID    *uuid.UUID `json:"tenant_id,omitempty"`
+	Status      string     `json:"status"`
+	Attempts    int        `json:"attempts"`
+	MaxAttempts int        `json:"max_attempts"`
+	LastError   string     `json:"last_error"`
 }
 
 // ReprocessDeadJob requeues only a dead job visible to the operator. Attempts
@@ -400,8 +404,23 @@ func (r Repository) ClaimJob(ctx context.Context) (Job, error) {
 		return Job{}, err
 	}
 	defer tx.Rollback(ctx)
+	// A worker that exhausted its retry budget may die after its lease expires.
+	// Close that state here so it cannot remain processing forever. This runs in
+	// the same transaction as the next claim and is therefore safe under load.
+	if _, err = tx.Exec(ctx, `
+		WITH expired AS (
+			UPDATE media_jobs
+			SET status='dead',completed_at=now(),lease_until=NULL,claim_token=NULL,updated_at=now()
+			WHERE status='processing' AND lease_until < now() AND attempts >= max_attempts
+			RETURNING source_object_id
+		)
+		UPDATE storage_objects o SET status='failed',updated_at=now()
+		WHERE o.id IN (SELECT source_object_id FROM expired)`); err != nil {
+		return Job{}, err
+	}
 	var j Job
 	var tenantID uuid.UUID
+	claimToken := uuid.New()
 	err = tx.QueryRow(ctx, `SELECT j.id,j.organization_id,j.asset_id,j.source_object_id,COALESCE(j.tenant_id,'00000000-0000-0000-0000-000000000000'),o.object_key,o.bucket,o.size_bytes
 		FROM media_jobs j JOIN storage_objects o ON o.id=j.source_object_id
 		WHERE (j.status='queued' OR (j.status='processing' AND j.lease_until < now())) AND j.attempts < j.max_attempts
@@ -412,7 +431,7 @@ func (r Repository) ClaimJob(ctx context.Context) (Job, error) {
 		}
 		return Job{}, err
 	}
-	if _, err = tx.Exec(ctx, `UPDATE media_jobs SET status='processing',attempts=attempts+1,started_at=COALESCE(started_at,now()),locked_at=now(),lease_until=now()+interval '15 minutes',updated_at=now() WHERE id=$1`, j.ID); err != nil {
+	if _, err = tx.Exec(ctx, `UPDATE media_jobs SET status='processing',attempts=attempts+1,started_at=COALESCE(started_at,now()),locked_at=now(),lease_until=now()+$2 * interval '1 second',claim_token=$3,updated_at=now() WHERE id=$1`, j.ID, int64(mediaJobLease/time.Second), claimToken); err != nil {
 		return Job{}, err
 	}
 	if tenantID != uuid.Nil {
@@ -424,8 +443,23 @@ func (r Repository) ClaimJob(ctx context.Context) (Job, error) {
 	if err = tx.Commit(ctx); err != nil {
 		return Job{}, err
 	}
+	j.ClaimToken = claimToken
 	return j, nil
 }
+
+// RenewJobLease extends the current claim only when its fencing token is still
+// current. A stale worker can therefore never regain ownership of a job.
+func (r Repository) RenewJobLease(ctx context.Context, j Job) error {
+	result, err := r.Pool.Exec(ctx, `UPDATE media_jobs SET lease_until=now()+$2 * interval '1 second',updated_at=now() WHERE id=$1 AND status='processing' AND claim_token=$3 AND lease_until >= now()`, j.ID, int64(mediaJobLease/time.Second), j.ClaimToken)
+	if err != nil {
+		return err
+	}
+	if result.RowsAffected() != 1 {
+		return ErrJobLeaseLost
+	}
+	return nil
+}
+
 func (r Repository) FinishJob(ctx context.Context, j Job, hlsURI string, storageBytes int64, errMsg string, keepSource bool) error {
 	tx, err := r.Pool.Begin(ctx)
 	if err != nil {
@@ -437,8 +471,12 @@ func (r Repository) FinishJob(ctx context.Context, j Job, hlsURI string, storage
 		if !keepSource {
 			delta -= j.SourceBytes
 		}
-		if _, err = tx.Exec(ctx, `UPDATE media_jobs SET status='completed',progress_percent=100,error_message='',last_error='',completed_at=now(),lease_until=NULL,updated_at=now() WHERE id=$1 AND status='processing'`, j.ID); err != nil {
-			return err
+		result, updateErr := tx.Exec(ctx, `UPDATE media_jobs SET status='completed',progress_percent=100,error_message='',last_error='',completed_at=now(),lease_until=NULL,claim_token=NULL,updated_at=now() WHERE id=$1 AND status='processing' AND claim_token=$2`, j.ID, j.ClaimToken)
+		if updateErr != nil {
+			return updateErr
+		}
+		if result.RowsAffected() != 1 {
+			return ErrJobLeaseLost
 		}
 		if _, err = tx.Exec(ctx, `UPDATE storage_objects SET status='ready',updated_at=now() WHERE id=$1`, j.SourceObjectID); err != nil {
 			return err
@@ -448,8 +486,12 @@ func (r Repository) FinishJob(ctx context.Context, j Job, hlsURI string, storage
 		}
 		_, err = tx.Exec(ctx, `UPDATE storage_pools SET used_bytes=GREATEST(used_bytes+$1,0),updated_at=now() WHERE organization_id=$2 AND tenant_id IS NOT DISTINCT FROM $3`, delta, j.OrganizationID, j.TenantID)
 	} else {
-		if _, err = tx.Exec(ctx, `UPDATE media_jobs SET status=CASE WHEN attempts >= max_attempts THEN 'dead' ELSE 'queued' END,progress_percent=0,error_message=$1,last_error=$1,completed_at=CASE WHEN attempts >= max_attempts THEN now() ELSE NULL END,lease_until=NULL,updated_at=now() WHERE id=$2 AND status='processing'`, errMsg, j.ID); err != nil {
-			return err
+		result, updateErr := tx.Exec(ctx, `UPDATE media_jobs SET status=CASE WHEN attempts >= max_attempts THEN 'dead' ELSE 'queued' END,progress_percent=0,error_message=$1,last_error=$1,completed_at=CASE WHEN attempts >= max_attempts THEN now() ELSE NULL END,lease_until=NULL,claim_token=NULL,updated_at=now() WHERE id=$2 AND status='processing' AND claim_token=$3`, errMsg, j.ID, j.ClaimToken)
+		if updateErr != nil {
+			return updateErr
+		}
+		if result.RowsAffected() != 1 {
+			return ErrJobLeaseLost
 		}
 		_, err = tx.Exec(ctx, `UPDATE storage_objects SET status=CASE WHEN EXISTS (SELECT 1 FROM media_jobs WHERE id=$2 AND status='dead') THEN 'failed' ELSE 'uploaded' END,updated_at=now() WHERE id=$1`, j.SourceObjectID, j.ID)
 	}
