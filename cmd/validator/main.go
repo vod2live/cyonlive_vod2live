@@ -2,4 +2,6 @@ package main
 
 import "log"
 
-func main() { log.Println("validator: aguardando implementação do worker de inspeção HLS") }
+func main() {
+	log.Println("validator: stub não operacional; worker de inspeção HLS ainda não implementado")
+}

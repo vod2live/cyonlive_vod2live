@@ -2,4 +2,4 @@ package main
 
 import "log"
 
-func main() { log.Println("scheduler: aguardando implementação do worker de grade") }
+func main() { log.Println("scheduler: stub não operacional; worker de grade ainda não implementado") }

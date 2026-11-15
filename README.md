@@ -1,6 +1,6 @@
 # VOD2Live Backend
 
-Backend profissional para transformar ativos VOD HLS em canais lineares HLS. O sistema monta a grade, calcula a posição temporal do playout e publica manifests dinâmicos de saída. Não há transcodificação: os conteúdos de entrada precisam ser disponibilizados como playlists HLS (`master.m3u8` ou media playlist) e seus segmentos continuam sendo servidos pela origem/CDN do conteúdo.
+Backend profissional para transformar ativos VOD em canais lineares HLS. O sistema aceita tanto URLs HLS externas (`master.m3u8` ou media playlist), mantendo os segmentos na origem/CDN, quanto uploads gerenciados: o `media-worker` usa FFmpeg para produzir HLS versionado no object store. Em ambos os casos, a API monta a grade, calcula a posição temporal do playout e publica manifests dinâmicos de saída.
 
 > **Status:** MVP avançado em pré-produção. O núcleo funcional, segurança inicial, multi-tenancy, playout, observabilidade e operação de banco estão implementados. A validação final em ambiente real ainda depende de infraestrutura com Docker, PostgreSQL, Redis, secret manager, CDN e testes de carga representativos.
 
@@ -34,7 +34,7 @@ O VOD2Live recebe URLs HLS, valida os manifests, cadastra os ativos, associa ess
 O sistema é adequado para cenários como:
 
 - canais FAST e canais corporativos baseados em VOD;
-- programação linear sem transcodificação;
+- programação linear com origem HLS externa ou assets gerenciados por upload/transcodificação;
 - montagem de grades com loop contínuo;
 - distribuição de playback por CDN;
 - operação multi-organização com papéis administrativos;
@@ -83,13 +83,15 @@ Origem HLS dos ativos ------------------------^
 - **Parser HLS (`pkg/hls`)**: leitura e serialização de master/media playlists.
 - **Manifest service (`internal/manifest`)**: resolução da grade e construção do HLS linear.
 - **Playback (`internal/playback`)**: assinatura HMAC, validação de escopo e proxy de segmentos.
+- **Media worker (`cmd/media-worker`)**: conversão assíncrona de uploads para HLS via FFmpeg, revisão editorial e reconciliação de storage/quota.
+- **Scheduler e validator (`cmd/scheduler`, `cmd/validator`)**: pontos de extensão ainda não operacionais; os binários apenas registram uma mensagem e encerram.
 
 ## Fluxo operacional
 
 1. O administrador cria a organização e o primeiro usuário.
-2. Um usuário autorizado cadastra uma URL HLS.
-3. O backend valida master/media playlist, tamanho, timeout, redirects e origem de rede.
-4. Um canal é criado e os ativos são inseridos na grade com horário de início e término.
+2. Um usuário autorizado escolhe uma das entradas suportadas: cadastra uma URL HLS externa, ou reserva quota e envia um arquivo pela biblioteca gerenciada.
+3. Para HLS externo, o backend valida master/media playlist, tamanho, timeout, redirects e origem de rede; para upload, o `media-worker` executa FFmpeg, publica HLS e aguarda revisão editorial.
+4. Um canal é criado e os ativos aprovados são inseridos na grade com horário de início e término.
 5. O canal é iniciado.
 6. Um worker adquire o lease Redis daquele canal e atualiza seu estado.
 7. Um operador solicita uma URL temporária de playback.
@@ -264,7 +266,7 @@ Operações de escrita autenticadas registram ator, organização, ação, recur
 
 ## Ingestão HLS e SSRF
 
-Somente URLs HTTP(S) de HLS são aceitas. O backend não recebe MP4, MPEG-TS ou uploads para transcodificação.
+O caminho HLS externo aceita somente URLs HTTP(S) de master/media playlists. O caminho de upload gerenciado aceita arquivos de vídeo pela biblioteca, que são processados pelo `media-worker` via FFmpeg.
 
 Proteções aplicadas:
 
@@ -357,7 +359,7 @@ GET /metrics
 GET /version
 ```
 
-O `media-worker` expõe `GET /metrics` em `MEDIA_METRICS_ADDR` (padrão `:9091`). O endpoint registra jobs concluídos e falhos, duração do processamento por resultado e o estado atual (`starting`, `idle`, `processing`, `stopping` ou `failed`). O Compose e o Prometheus já incluem esse alvo separado da API.
+O `media-worker` expõe `GET /metrics` em `MEDIA_METRICS_ADDR` (padrão `:9091`). O endpoint registra jobs concluídos e falhos, duração do processamento por resultado e o estado atual (`starting`, `idle`, `processing`, `stopping` ou `failed`). O playout expõe `/healthz`, `/readyz` e `/metrics` em `PLAYOUT_METRICS_ADDR` (padrão `:9092`), incluindo ticks e erros de processamento. O Compose e o Prometheus incluem esses alvos separados da API.
 
 Uploads que permanecem em `uploading` além de `MEDIA_ABANDONED_UPLOAD_TTL_HOURS` (padrão: 24 horas) são limpos periodicamente pelo `media-worker`. A rotina remove o objeto de quarentena, libera a quota reservada, marca o registro como `deleted` e invalida o asset pendente associado. O intervalo padrão é `MEDIA_CLEANUP_INTERVAL_SECONDS=900`; falhas de storage deixam o upload pendente para uma nova tentativa.
 
@@ -532,8 +534,8 @@ A validação integrada precisa ser executada em um runner com Docker habilitado
 cmd/
   api/                  API HTTP principal
   playout/              Worker contínuo de playout
-  scheduler/            Ponto de extensão para scheduler
-  validator/            Ponto de extensão para validação
+  scheduler/            Stub não operacional de scheduler
+  validator/            Stub não operacional de validação HLS
   media-worker/         Conversão assíncrona de uploads para HLS
 internal/
   asset/                Ativos HLS e persistência
