@@ -7,12 +7,15 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 var (
 	ErrNotFound         = errors.New("schedule item not found")
 	ErrAssetUnavailable = errors.New("asset is not approved or outside channel tenant scope")
+	ErrScheduleConflict = errors.New("schedule conflict")
+	ErrInvalidInterval  = errors.New("schedule interval must end after it starts")
 )
 
 type Item struct {
@@ -28,6 +31,21 @@ type Item struct {
 
 type PostgresRepository struct{ Pool *pgxpool.Pool }
 
+func validateInterval(startsAt time.Time, endsAt *time.Time) error {
+	if endsAt != nil && !endsAt.After(startsAt) {
+		return ErrInvalidInterval
+	}
+	return nil
+}
+
+func mapScheduleWriteError(err error) error {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == "23P01" {
+		return fmt.Errorf("%w: %s", ErrScheduleConflict, pgErr.ConstraintName)
+	}
+	return err
+}
+
 const eligibleAssetSQL = `EXISTS (
  SELECT 1 FROM channels c JOIN assets a ON a.organization_id=c.organization_id
  WHERE c.id=$1 AND c.organization_id=$2 AND a.id=$3
@@ -37,6 +55,9 @@ const eligibleAssetSQL = `EXISTS (
 )`
 
 func (r PostgresRepository) Create(ctx context.Context, item Item) error {
+	if err := validateInterval(item.StartsAt, item.EndsAt); err != nil {
+		return err
+	}
 	var eligible bool
 	if err := r.Pool.QueryRow(ctx, `SELECT `+eligibleAssetSQL, item.ChannelID, item.OrganizationID, item.AssetID).Scan(&eligible); err != nil {
 		return err
@@ -44,16 +65,8 @@ func (r PostgresRepository) Create(ctx context.Context, item Item) error {
 	if !eligible {
 		return ErrAssetUnavailable
 	}
-	var conflict bool
-	err := r.Pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM schedule_items WHERE channel_id=$1 AND enabled=true AND tstzrange(starts_at,COALESCE(ends_at,'infinity'::timestamptz),'[)') && tstzrange($2,COALESCE($3,'infinity'::timestamptz),'[)'))`, item.ChannelID, item.StartsAt, item.EndsAt).Scan(&conflict)
-	if err != nil {
-		return err
-	}
-	if conflict {
-		return fmt.Errorf("schedule conflict")
-	}
-	_, err = r.Pool.Exec(ctx, `INSERT INTO schedule_items (id,organization_id,channel_id,asset_id,starts_at,ends_at,position,enabled) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`, item.ID, item.OrganizationID, item.ChannelID, item.AssetID, item.StartsAt, item.EndsAt, item.Position, item.Enabled)
-	return err
+	_, err := r.Pool.Exec(ctx, `INSERT INTO schedule_items (id,organization_id,channel_id,asset_id,starts_at,ends_at,position,enabled) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`, item.ID, item.OrganizationID, item.ChannelID, item.AssetID, item.StartsAt, item.EndsAt, item.Position, item.Enabled)
+	return mapScheduleWriteError(err)
 }
 
 func (r PostgresRepository) List(ctx context.Context, channelID uuid.UUID) ([]Item, error) {
@@ -92,6 +105,9 @@ func (r PostgresRepository) Current(ctx context.Context, channelID uuid.UUID, at
 }
 
 func (r PostgresRepository) Update(ctx context.Context, organizationID, id uuid.UUID, startsAt time.Time, endsAt *time.Time, position int, enabled bool) error {
+	if err := validateInterval(startsAt, endsAt); err != nil {
+		return err
+	}
 	if enabled {
 		var eligible bool
 		err := r.Pool.QueryRow(ctx, `SELECT EXISTS (
@@ -108,15 +124,8 @@ func (r PostgresRepository) Update(ctx context.Context, organizationID, id uuid.
 			return ErrAssetUnavailable
 		}
 	}
-	var conflict bool
-	err := r.Pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM schedule_items WHERE organization_id=$1 AND channel_id=(SELECT channel_id FROM schedule_items WHERE id=$2 AND organization_id=$1) AND id<>$2 AND enabled=true AND tstzrange(starts_at,COALESCE(ends_at,'infinity'::timestamptz),'[)') && tstzrange($3,COALESCE($4,'infinity'::timestamptz),'[)'))`, organizationID, id, startsAt, endsAt).Scan(&conflict)
-	if err != nil {
-		return err
-	}
-	if conflict {
-		return fmt.Errorf("schedule conflict")
-	}
 	result, err := r.Pool.Exec(ctx, `UPDATE schedule_items SET starts_at=$3,ends_at=$4,position=$5,enabled=$6 WHERE id=$1 AND organization_id=$2`, id, organizationID, startsAt, endsAt, position, enabled)
+	err = mapScheduleWriteError(err)
 	if err == nil && result.RowsAffected() == 0 {
 		return ErrNotFound
 	}
