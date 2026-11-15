@@ -541,6 +541,14 @@ testes E2E subsequentes. Essa etapa requer um daemon Docker disponível.
 
 A validação integrada precisa ser executada em um runner com Docker habilitado.
 
+Para exercitar a recuperação sem tocar no banco principal, use
+`make db-restore-drill BACKUP_FILE=backups/arquivo.dump`. O script valida o checksum e
+catálogo, cria um banco temporário no serviço PostgreSQL, executa um `pg_restore`
+integral em transação única, faz uma consulta de sanidade e remove o banco ao terminar.
+Ao final registra `rto_seconds` e `rpo_age_seconds`; defina `RESTORE_DRILL_KEEP_DB=1`
+somente quando for necessário inspecionar o banco temporário após o teste. A CI executa
+esse drill sobre o dump gerado no próprio job.
+
 ## Estrutura do projeto
 
 ```text

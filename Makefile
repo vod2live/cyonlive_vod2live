@@ -1,6 +1,6 @@
 APP=vod2live
 
-.PHONY: run test coverage lint fmt compose-up compose-down staging-smoke e2e contract load-test playback-load-test ha-smoke migrate verify-migrations db-backup db-verify-backup db-restore
+.PHONY: run test coverage lint fmt compose-up compose-down staging-smoke e2e contract load-test playback-load-test ha-smoke migrate verify-migrations db-backup db-verify-backup db-restore db-restore-drill
 
 run:
 	go run ./cmd/api
@@ -58,3 +58,6 @@ db-verify-backup:
 
 db-restore:
 	CONFIRM_RESTORE=YES scripts/db-restore.sh $(BACKUP_FILE)
+
+db-restore-drill:
+	scripts/db-restore-drill.sh $(BACKUP_FILE)
