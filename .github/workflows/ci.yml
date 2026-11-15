@@ -60,7 +60,7 @@ jobs:
           STAGING_SMOKE_KEEP_SERVICES: "1"
         run: |
           ./scripts/staging-smoke.sh
-      - run: VOD2LIVE_TEST_DATABASE_URL='postgres://vod2live:vod2live@localhost:5432/vod2live?sslmode=disable' VOD2LIVE_TEST_MINIO_ENDPOINT='localhost:9000' go test ./internal/media -run '^TestWorkerFailurePersistsDeadJobAndObjectState$' -count=1
+      - run: VOD2LIVE_TEST_DATABASE_URL='postgres://vod2live:vod2live@localhost:5432/vod2live?sslmode=disable' VOD2LIVE_TEST_MINIO_ENDPOINT='localhost:9000' VOD2LIVE_TEST_MINIO_ACCESS_KEY='test' VOD2LIVE_TEST_MINIO_SECRET_KEY='testpassword' go test ./internal/media -run '^TestWorkerFailurePersistsDeadJobAndObjectState$' -count=1
       - run: ./tests/integration/e2e.sh
       - run: ./tests/integration/contract.sh
       - run: ./scripts/ha-smoke.sh
