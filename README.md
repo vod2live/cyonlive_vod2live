@@ -395,14 +395,16 @@ O PostgreSQL é a fonte persistente do sistema. Redis contém estado derivado, c
 Com a stack ativa:
 
 ```bash
-make db-backup
+BACKUP_RETENTION_DAYS=30 make db-backup
 make db-verify-backup BACKUP_FILE=backups/arquivo.dump
 ```
 
-Restore é destrutivo e exige confirmação explícita:
+O backup é gravado com permissão restrita, checksum `.sha256` e escrita atômica. `BACKUP_RETENTION_DAYS` remove dumps locais antigos; copie os arquivos para armazenamento externo durável e protegido conforme a política operacional.
+
+Restore é destrutivo, valida o checksum/`pg_restore` antes de alterar o banco e exige confirmação explícita:
 
 ```bash
-make db-restore BACKUP_FILE=backups/arquivo.dump
+CONFIRM_RESTORE=YES make db-restore BACKUP_FILE=backups/arquivo.dump
 ```
 
 As migrações são reaplicáveis e podem ser verificadas com:
@@ -419,7 +421,7 @@ Objetivos operacionais documentados:
 - **RPO alvo:** 15 minutos;
 - **RTO alvo:** 30 minutos.
 
-Esses objetivos dependem de backups externos, armazenamento durável, secret manager, automação de provisionamento e testes periódicos de restauração.
+Esses objetivos dependem de backups externos, armazenamento durável, secret manager, automação de provisionamento e testes periódicos de restauração. Para exigir checksum também em arquivos antigos, use `REQUIRE_BACKUP_CHECKSUM=true make db-verify-backup BACKUP_FILE=...`.
 
 ## Biblioteca, quotas e conversão HLS
 
