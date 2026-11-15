@@ -33,9 +33,11 @@ func (c *Client) EnsureBucket(ctx context.Context) error {
 		return err
 	}
 	if !exists {
-		return c.Minio.MakeBucket(ctx, c.Bucket, minio.MakeBucketOptions{})
+		if err := c.Minio.MakeBucket(ctx, c.Bucket, minio.MakeBucketOptions{}); err != nil {
+			return err
+		}
 	}
-	return nil
+	return c.Minio.EnableVersioning(ctx, c.Bucket)
 }
 
 func (c *Client) PresignedPut(ctx context.Context, key string, expiry time.Duration) (*url.URL, error) {
@@ -46,16 +48,24 @@ func (c *Client) PresignedGet(ctx context.Context, key string, expiry time.Durat
 	return c.Minio.PresignedGetObject(ctx, c.Bucket, cleanKey(key), expiry, nil)
 }
 
-func (c *Client) Stat(ctx context.Context, key string) (int64, string, error) {
-	info, err := c.Minio.StatObject(ctx, c.Bucket, cleanKey(key), minio.StatObjectOptions{})
-	return info.Size, info.ContentType, err
+type ObjectStat struct {
+	Size           int64
+	ContentType    string
+	ETag           string
+	VersionID      string
+	ChecksumSHA256 string
 }
 
-func (c *Client) Download(ctx context.Context, key, destination string) error {
+func (c *Client) Stat(ctx context.Context, key string) (ObjectStat, error) {
+	info, err := c.Minio.StatObject(ctx, c.Bucket, cleanKey(key), minio.StatObjectOptions{})
+	return ObjectStat{Size: info.Size, ContentType: info.ContentType, ETag: info.ETag, VersionID: info.VersionID, ChecksumSHA256: info.ChecksumSHA256}, err
+}
+
+func (c *Client) Download(ctx context.Context, key, versionID, destination string) error {
 	if err := os.MkdirAll(filepath.Dir(destination), 0o755); err != nil {
 		return err
 	}
-	return c.Minio.FGetObject(ctx, c.Bucket, cleanKey(key), destination, minio.GetObjectOptions{})
+	return c.Minio.FGetObject(ctx, c.Bucket, cleanKey(key), destination, minio.GetObjectOptions{VersionID: versionID})
 }
 
 func (c *Client) Read(ctx context.Context, key string, maxBytes int64) ([]byte, error) {

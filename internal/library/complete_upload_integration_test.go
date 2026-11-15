@@ -64,7 +64,7 @@ func TestCompleteUploadOversizePersistsFailureAndReleasesReservation(t *testing.
 	if err != nil {
 		t.Fatalf("reserve upload: %v", err)
 	}
-	if _, err = repo.CompleteUpload(ctx, orgID, upload.ID, 101); err == nil {
+	if _, err = repo.CompleteUpload(ctx, orgID, upload.ID, CompletedObject{Size: 101, ETag: "oversize-test", VersionID: "version-oversize-test"}); err == nil {
 		t.Fatal("expected oversized upload to be rejected")
 	}
 

@@ -68,6 +68,13 @@ type Upload struct {
 	Status         string     `json:"status"`
 }
 
+type CompletedObject struct {
+	Size           int64
+	ETag           string
+	VersionID      string
+	ChecksumSHA256 string
+}
+
 func (r Repository) CreateLibrary(ctx context.Context, org uuid.UUID, tenant *uuid.UUID, name string) (Library, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
@@ -163,7 +170,7 @@ func (r Repository) ReserveUpload(ctx context.Context, org uuid.UUID, tenant *uu
 	return Upload{ID: objectID, OrganizationID: org, TenantID: tenant, LibraryID: libraryID, AssetID: assetID, ObjectKey: key, ExpectedBytes: expected, Status: "uploading"}, nil
 }
 
-func (r Repository) CompleteUpload(ctx context.Context, org, objectID uuid.UUID, actualBytes int64) (Upload, error) {
+func (r Repository) CompleteUpload(ctx context.Context, org, objectID uuid.UUID, object CompletedObject) (Upload, error) {
 	tx, err := r.Pool.Begin(ctx)
 	if err != nil {
 		return Upload{}, err
@@ -182,11 +189,14 @@ func (r Repository) CompleteUpload(ctx context.Context, org, objectID uuid.UUID,
 	if u.Status != "uploading" {
 		return u, fmt.Errorf("upload is not pending")
 	}
-	if actualBytes <= 0 {
+	if object.Size <= 0 {
 		return u, fmt.Errorf("uploaded object is empty")
 	}
-	if actualBytes > u.ExpectedBytes {
-		if _, err = tx.Exec(ctx, `UPDATE storage_objects SET status='failed',size_bytes=$1,updated_at=now() WHERE id=$2`, actualBytes, objectID); err != nil {
+	if object.VersionID == "" || object.ETag == "" {
+		return u, fmt.Errorf("object version and etag are required")
+	}
+	if object.Size > u.ExpectedBytes {
+		if _, err = tx.Exec(ctx, `UPDATE storage_objects SET status='failed',size_bytes=$1,updated_at=now() WHERE id=$2`, object.Size, objectID); err != nil {
 			return u, err
 		}
 		if _, err = tx.Exec(ctx, `UPDATE storage_pools SET reserved_bytes=GREATEST(reserved_bytes-$1,0),updated_at=now() WHERE organization_id=$2 AND tenant_id IS NOT DISTINCT FROM $3`, u.ExpectedBytes, org, tenant); err != nil {
@@ -198,13 +208,13 @@ func (r Repository) CompleteUpload(ctx context.Context, org, objectID uuid.UUID,
 		u.Status = "failed"
 		return u, fmt.Errorf("uploaded object exceeds reserved size")
 	}
-	if _, err = tx.Exec(ctx, `UPDATE storage_objects SET size_bytes=$1,status='uploaded',updated_at=now() WHERE id=$2`, actualBytes, objectID); err != nil {
+	if _, err = tx.Exec(ctx, `UPDATE storage_objects SET size_bytes=$1,checksum_sha256=$2,etag=$3,version_id=$4,status='uploaded',updated_at=now() WHERE id=$5 AND status='uploading'`, object.Size, object.ChecksumSHA256, object.ETag, object.VersionID, objectID); err != nil {
 		return u, err
 	}
 	if err = tx.QueryRow(ctx, `SELECT expected_size_bytes FROM storage_objects WHERE id=$1`, objectID).Scan(&old); err != nil {
 		return u, err
 	}
-	if _, err = tx.Exec(ctx, `UPDATE storage_pools SET reserved_bytes=GREATEST(reserved_bytes-$1,0),used_bytes=used_bytes+$2,updated_at=now() WHERE organization_id=$3 AND tenant_id IS NOT DISTINCT FROM $4`, old, actualBytes, org, tenant); err != nil {
+	if _, err = tx.Exec(ctx, `UPDATE storage_pools SET reserved_bytes=GREATEST(reserved_bytes-$1,0),used_bytes=used_bytes+$2,updated_at=now() WHERE organization_id=$3 AND tenant_id IS NOT DISTINCT FROM $4`, old, object.Size, org, tenant); err != nil {
 		return u, err
 	}
 	if _, err = tx.Exec(ctx, `INSERT INTO media_jobs (organization_id,tenant_id,asset_id,source_object_id) VALUES ($1,$2,$3,$4)`, org, tenant, u.AssetID, objectID); err != nil {
@@ -322,7 +332,7 @@ type Job struct {
 	ID, OrganizationID, AssetID, SourceObjectID uuid.UUID
 	ClaimToken                                  uuid.UUID
 	TenantID                                    *uuid.UUID
-	ObjectKey, Bucket                           string
+	ObjectKey, Bucket, SourceVersionID          string
 	SourceBytes                                 int64
 }
 
@@ -429,10 +439,10 @@ func (r Repository) ClaimJob(ctx context.Context) (Job, error) {
 	var j Job
 	var tenantID uuid.UUID
 	claimToken := uuid.New()
-	err = tx.QueryRow(ctx, `SELECT j.id,j.organization_id,j.asset_id,j.source_object_id,COALESCE(j.tenant_id,'00000000-0000-0000-0000-000000000000'),o.object_key,o.bucket,o.size_bytes
+	err = tx.QueryRow(ctx, `SELECT j.id,j.organization_id,j.asset_id,j.source_object_id,COALESCE(j.tenant_id,'00000000-0000-0000-0000-000000000000'),o.object_key,o.bucket,o.version_id,o.size_bytes
 		FROM media_jobs j JOIN storage_objects o ON o.id=j.source_object_id
 		WHERE (j.status='queued' OR (j.status='processing' AND j.lease_until < now())) AND j.attempts < j.max_attempts
-		ORDER BY j.created_at FOR UPDATE OF j SKIP LOCKED LIMIT 1`).Scan(&j.ID, &j.OrganizationID, &j.AssetID, &j.SourceObjectID, &tenantID, &j.ObjectKey, &j.Bucket, &j.SourceBytes)
+		ORDER BY j.created_at FOR UPDATE OF j SKIP LOCKED LIMIT 1`).Scan(&j.ID, &j.OrganizationID, &j.AssetID, &j.SourceObjectID, &tenantID, &j.ObjectKey, &j.Bucket, &j.SourceVersionID, &j.SourceBytes)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			return Job{}, err

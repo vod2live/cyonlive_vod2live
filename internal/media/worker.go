@@ -123,7 +123,7 @@ func (w Worker) process(ctx context.Context, job library.Job) error {
 	}
 	defer os.RemoveAll(dir)
 	source := filepath.Join(dir, "source")
-	if err := w.Storage.Download(ctx, job.ObjectKey, source); err != nil {
+	if err := w.Storage.Download(ctx, job.ObjectKey, job.SourceVersionID, source); err != nil {
 		return fmt.Errorf("download source: %w", err)
 	}
 	out := filepath.Join(dir, "hls", "720p")

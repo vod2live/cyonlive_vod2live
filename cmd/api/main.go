@@ -61,6 +61,9 @@ func main() {
 	if err != nil {
 		log.Fatalf("storage: %v", err)
 	}
+	if err := retry.Run(context.Background(), 8, 500*time.Millisecond, func() error { return objectStore.EnsureBucket(context.Background()) }); err != nil {
+		log.Fatalf("storage bucket: %v", err)
+	}
 	identities := identity.Repository{Pool: pool}
 	libraryHandler := library.Handler{Repo: library.Repository{Pool: pool}, Storage: objectStore, TenantAccess: identities}
 	channels := channel.PostgresRepository{Pool: pool}

@@ -399,7 +399,7 @@ func (h Handler) CompleteUpload(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "tenant não autorizado", http.StatusForbidden)
 		return
 	}
-	actual, _, err := h.Storage.Stat(r.Context(), func() string {
+	object, err := h.Storage.Stat(r.Context(), func() string {
 		u, e := h.Repo.UploadKey(r.Context(), p.OrganizationID, id)
 		if e != nil {
 			return ""
@@ -410,11 +410,11 @@ func (h Handler) CompleteUpload(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "objeto não encontrado no storage", 422)
 		return
 	}
-	if req.SizeBytes != actual {
+	if req.SizeBytes != object.Size {
 		http.Error(w, "tamanho informado não corresponde ao objeto", 422)
 		return
 	}
-	u, err := h.Repo.CompleteUpload(r.Context(), p.OrganizationID, id, actual)
+	u, err := h.Repo.CompleteUpload(r.Context(), p.OrganizationID, id, CompletedObject{Size: object.Size, ETag: object.ETag, VersionID: object.VersionID, ChecksumSHA256: object.ChecksumSHA256})
 	if err != nil {
 		http.Error(w, "erro ao concluir upload", 422)
 		return
