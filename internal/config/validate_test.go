@@ -15,6 +15,18 @@ func TestDevelopmentAllowsEmptyAPIKey(t *testing.T) {
 	}
 }
 
+func TestProductionRequiresMetricsAPIKey(t *testing.T) {
+	c := Config{
+		Environment: "production", HTTPAddr: ":8080", DatabaseURL: "postgres://x", RedisAddr: "redis:6379",
+		APIKey: "admin-key", PlaybackTokenSecret: "random-playback-secret-at-least-32-bytes",
+		AuthTokenSecret: "random-auth-secret-at-least-32-bytes-long", PlaybackTokenTTLSeconds: 600, AuthTokenTTLSeconds: 900,
+		HLSMaxManifestBytes: 1, HLSRequestTimeoutSecs: 1, RateLimitPerMinute: 1,
+	}
+	if err := c.Validate(); err == nil {
+		t.Fatal("expected metrics API key requirement")
+	}
+}
+
 func TestProductionRejectsDevelopmentPlaybackSecret(t *testing.T) {
 	c := Config{
 		Environment: "production", HTTPAddr: ":8080", DatabaseURL: "postgres://x", RedisAddr: "redis:6379",

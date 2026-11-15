@@ -51,3 +51,22 @@ func TestMediaMetrics(t *testing.T) {
 		t.Fatalf("unexpected unsupported status in metrics: %s", body)
 	}
 }
+
+func TestProtectedMetricsRequiresAndAcceptsAPIKey(t *testing.T) {
+	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
+	handler := Protected("metrics-secret", next)
+
+	unauthorized := httptest.NewRecorder()
+	handler.ServeHTTP(unauthorized, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if unauthorized.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthorized status = %d, want %d", unauthorized.Code, http.StatusUnauthorized)
+	}
+
+	authorized := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	req.Header.Set("Authorization", "Bearer metrics-secret")
+	handler.ServeHTTP(authorized, req)
+	if authorized.Code != http.StatusNoContent {
+		t.Fatalf("authorized status = %d, want %d", authorized.Code, http.StatusNoContent)
+	}
+}

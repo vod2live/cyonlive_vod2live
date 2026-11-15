@@ -31,6 +31,9 @@ func (c Config) Validate() error {
 		if c.APIKey == "" {
 			return fmt.Errorf("API_KEY é obrigatório em production")
 		}
+		if c.MetricsAPIKey == "" {
+			return fmt.Errorf("METRICS_API_KEY é obrigatório em production")
+		}
 		if c.AllowPrivateHLS {
 			return fmt.Errorf("ALLOW_PRIVATE_HLS deve ser false em production")
 		}

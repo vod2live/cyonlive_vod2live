@@ -30,6 +30,7 @@ services:
       MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD is required}
       MINIO_BUCKET: ${MINIO_BUCKET:-vod2live}
       MINIO_USE_SSL: ${MINIO_USE_SSL:-true}
+      METRICS_API_KEY: ${METRICS_API_KEY:?METRICS_API_KEY is required}
     read_only: true
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
@@ -56,6 +57,7 @@ services:
       PLAYOUT_METRICS_ADDR: :9092
       DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
       REDIS_ADDR: ${REDIS_ADDR:?REDIS_ADDR is required}
+      METRICS_API_KEY: ${METRICS_API_KEY:?METRICS_API_KEY is required}
     read_only: true
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
@@ -86,6 +88,7 @@ services:
       MINIO_BUCKET: ${MINIO_BUCKET:-vod2live}
       MINIO_USE_SSL: ${MINIO_USE_SSL:-true}
       MEDIA_KEEP_ORIGINAL: ${MEDIA_KEEP_ORIGINAL:-false}
+      METRICS_API_KEY: ${METRICS_API_KEY:?METRICS_API_KEY is required}
       MEDIA_TEMP_DIR: /tmp/vod2live-media
       MEDIA_METRICS_ADDR: :9091
       MEDIA_ABANDONED_UPLOAD_TTL_HOURS: ${MEDIA_ABANDONED_UPLOAD_TTL_HOURS:-24}
@@ -101,7 +104,7 @@ services:
     depends_on: !reset []
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9091/metrics"]
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9091/healthz"]
       interval: 15s
       timeout: 5s
       retries: 6

@@ -384,7 +384,11 @@ Configuração e alertas:
 - [`deployments/observability/prometheus.yml`](deployments/observability/prometheus.yml)
 - [`deployments/observability/rules.yml`](deployments/observability/rules.yml)
 
-O endpoint `/metrics` deve ser restringido por rede, ingress ou autenticação do sistema de monitoramento em produção.
+Em desenvolvimento, `METRICS_API_KEY` pode ficar vazio. Em produção ele é obrigatório:
+`/metrics` aceita a chave em `X-API-Key` ou como `Authorization: Bearer <chave>`.
+Configure o Prometheus ou o ingress para enviar essa credencial e mantenha os endpoints
+de métricas na rede interna. Os healthchecks `/healthz` e `/readyz` permanecem sem essa
+autenticação para que o orquestrador consiga verificar disponibilidade.
 
 Jobs em estado `dead` podem ser reprocessados por administrador ou operador através de `POST /v1/media/jobs/{jobID}/reprocess`. A operação exige o mesmo escopo de organização e tenant, restaura o objeto de origem para `uploaded`, preserva `attempts` e `last_error` e acrescenta cinco tentativas ao orçamento do worker.
 

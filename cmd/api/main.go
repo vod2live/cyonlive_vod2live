@@ -88,7 +88,7 @@ func main() {
 	r.Use(apiMetrics.Middleware)
 	r.Get("/healthz", health.Handler)
 	r.Get("/readyz", health.ReadyHandler(pool, redisClient))
-	r.Get("/metrics", apiMetrics.Handler)
+	r.Get("/metrics", metrics.Protected(cfg.MetricsAPIKey, http.HandlerFunc(apiMetrics.Handler)).ServeHTTP)
 	r.Get("/version", buildinfo.Handler)
 	r.Route("/playback/{channelID}", func(play chi.Router) {
 		play.Get("/master.m3u8", func(w http.ResponseWriter, r *http.Request) {

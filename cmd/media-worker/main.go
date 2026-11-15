@@ -40,7 +40,10 @@ func main() {
 		log.Fatal(err)
 	}
 	workerMetrics := &metrics.Metrics{}
-	metricsServer := &http.Server{Addr: mediaCfg.MetricsAddr, Handler: http.HandlerFunc(workerMetrics.Handler)}
+	metricsMux := http.NewServeMux()
+	metricsMux.Handle("/metrics", metrics.Protected(cfg.MetricsAPIKey, http.HandlerFunc(workerMetrics.Handler)))
+	metricsMux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
+	metricsServer := &http.Server{Addr: mediaCfg.MetricsAddr, Handler: metricsMux}
 	go func() {
 		if serveErr := metricsServer.ListenAndServe(); serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
 			log.Printf("media worker metrics server failed: %v", serveErr)

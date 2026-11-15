@@ -45,7 +45,7 @@ func main() {
 		metricsAddr = ":9092"
 	}
 	metricsMux := http.NewServeMux()
-	metricsMux.HandleFunc("/metrics", playoutMetrics.Handler)
+	metricsMux.Handle("/metrics", metrics.Protected(cfg.MetricsAPIKey, http.HandlerFunc(playoutMetrics.Handler)))
 	metricsMux.HandleFunc("/healthz", health.Handler)
 	metricsMux.HandleFunc("/readyz", health.ReadyHandler(pool, redisClient))
 	metricsServer := &http.Server{Addr: metricsAddr, Handler: metricsMux, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 60 * time.Second}

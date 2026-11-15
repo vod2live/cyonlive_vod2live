@@ -11,6 +11,7 @@ type Config struct {
 	DatabaseURL             string
 	RedisAddr               string
 	APIKey                  string
+	MetricsAPIKey           string
 	PlaybackTokenSecret     string
 	PlaybackTokenTTLSeconds int
 	AuthTokenSecret         string
@@ -30,6 +31,7 @@ func Load() Config {
 		DatabaseURL:             env("DATABASE_URL", "postgres://vod2live:vod2live@localhost:5432/vod2live?sslmode=disable"),
 		RedisAddr:               env("REDIS_ADDR", "localhost:6379"),
 		APIKey:                  env("API_KEY", ""),
+		MetricsAPIKey:           env("METRICS_API_KEY", ""),
 		PlaybackTokenSecret:     env("PLAYBACK_TOKEN_SECRET", "development-only-playback-secret-change-me"),
 		PlaybackTokenTTLSeconds: intEnv("PLAYBACK_TOKEN_TTL_SECONDS", 600),
 		AuthTokenSecret:         env("AUTH_TOKEN_SECRET", "development-only-auth-secret-change-me-rotate-before-production"),
