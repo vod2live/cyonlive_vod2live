@@ -53,6 +53,10 @@ func (w Worker) Run(ctx context.Context) error {
 			} else if stats.Deleted > 0 || stats.Failures > 0 {
 				log.Printf("abandoned upload cleanup scanned=%d deleted=%d failures=%d", stats.Scanned, stats.Deleted, stats.Failures)
 			}
+			w.processDeletionOutbox(ctx)
+			if reconcileErr := w.Jobs.ReconcileStorageQuota(ctx); reconcileErr != nil {
+				log.Printf("storage quota reconciliation failed: %v", reconcileErr)
+			}
 			lastCleanup = time.Now()
 		}
 		job, err := w.Jobs.ClaimJob(ctx)
@@ -107,6 +111,26 @@ func (w Worker) renewLease(ctx context.Context, job library.Job, stop context.Ca
 func (w Worker) setState(state string) {
 	if w.Metrics != nil {
 		w.Metrics.SetMediaWorkerState(state)
+	}
+}
+
+func (w Worker) processDeletionOutbox(ctx context.Context) {
+	items, err := w.Jobs.ClaimObjectDeletions(ctx, 25)
+	if err != nil {
+		log.Printf("storage deletion outbox claim failed: %v", err)
+		return
+	}
+	for _, item := range items {
+		if err := w.Storage.DeleteVersion(ctx, item.ObjectKey, item.VersionID); err != nil {
+			log.Printf("storage deletion outbox item %s failed: %v", item.ID, err)
+			if retryErr := w.Jobs.RetryObjectDeletion(ctx, item.ID, err, item.Attempts+1); retryErr != nil {
+				log.Printf("storage deletion outbox retry %s failed: %v", item.ID, retryErr)
+			}
+			continue
+		}
+		if err := w.Jobs.CompleteObjectDeletion(ctx, item.ID); err != nil {
+			log.Printf("storage deletion outbox complete %s failed: %v", item.ID, err)
+		}
 	}
 }
 
@@ -168,20 +192,31 @@ func (w Worker) process(ctx context.Context, job library.Job) error {
 	})
 	if err != nil {
 		for _, key := range uploaded {
-			_ = w.Storage.Delete(ctx, key)
+			if deleteErr := w.Storage.Delete(ctx, key); deleteErr != nil {
+				if enqueueErr := w.Jobs.EnqueueObjectDeletion(ctx, job.OrganizationID, key, "", "output upload compensation"); enqueueErr != nil {
+					log.Printf("enqueue output deletion %s failed: %v", key, enqueueErr)
+				}
+			}
 		}
 		return err
 	}
 	masterKey := fmt.Sprintf("hls/organization/%s/asset/%s/master.m3u8", job.OrganizationID, job.AssetID)
 	if err := w.Jobs.FinishJob(ctx, job, w.Storage.ObjectURI(masterKey), total, "", w.KeepSource); err != nil {
 		for _, key := range uploaded {
-			_ = w.Storage.Delete(ctx, key)
+			if deleteErr := w.Storage.Delete(ctx, key); deleteErr != nil {
+				if enqueueErr := w.Jobs.EnqueueObjectDeletion(ctx, job.OrganizationID, key, "", "finish job compensation"); enqueueErr != nil {
+					log.Printf("enqueue output deletion %s failed: %v", key, enqueueErr)
+				}
+			}
 		}
 		return err
 	}
 	if !w.KeepSource {
-		if err := w.Storage.Delete(ctx, job.ObjectKey); err != nil {
+		if err := w.Storage.DeleteVersion(ctx, job.ObjectKey, job.SourceVersionID); err != nil {
 			log.Printf("media source cleanup %s failed: %v", job.ID, err)
+			if enqueueErr := w.Jobs.EnqueueObjectDeletion(ctx, job.OrganizationID, job.ObjectKey, job.SourceVersionID, "source cleanup"); enqueueErr != nil {
+				log.Printf("enqueue source deletion %s failed: %v", job.ID, enqueueErr)
+			}
 		}
 	}
 	return nil

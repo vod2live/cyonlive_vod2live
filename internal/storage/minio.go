@@ -103,6 +103,10 @@ func (c *Client) Delete(ctx context.Context, key string) error {
 	return c.Minio.RemoveObject(ctx, c.Bucket, cleanKey(key), minio.RemoveObjectOptions{})
 }
 
+func (c *Client) DeleteVersion(ctx context.Context, key, versionID string) error {
+	return c.Minio.RemoveObject(ctx, c.Bucket, cleanKey(key), minio.RemoveObjectOptions{VersionID: versionID})
+}
+
 func (c *Client) ObjectURI(key string) string {
 	return fmt.Sprintf("s3://%s/%s", c.Bucket, cleanKey(key))
 }

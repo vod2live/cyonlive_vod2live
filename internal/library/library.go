@@ -20,6 +20,16 @@ type ObjectDeleter interface {
 	Delete(context.Context, string) error
 }
 
+type PendingDeletion struct {
+	ID, OrganizationID   uuid.UUID
+	ObjectKey, VersionID string
+	Attempts             int
+}
+
+type DeletionProcessor interface {
+	DeleteVersion(context.Context, string, string) error
+}
+
 type CleanupStats struct {
 	Scanned  int `json:"scanned"`
 	Deleted  int `json:"deleted"`
@@ -326,6 +336,85 @@ func (r Repository) CleanupAbandonedUploads(ctx context.Context, before time.Tim
 		stats.Deleted++
 	}
 	return stats, nil
+}
+
+func (r Repository) EnqueueObjectDeletion(ctx context.Context, organizationID uuid.UUID, objectKey, versionID, reason string) error {
+	_, err := r.Pool.Exec(ctx, `INSERT INTO storage_deletion_outbox(organization_id,object_key,version_id,reason) VALUES($1,$2,$3,$4) ON CONFLICT (organization_id,object_key,version_id) DO UPDATE SET status='pending',available_at=LEAST(storage_deletion_outbox.available_at,now()),reason=EXCLUDED.reason,updated_at=now()`, organizationID, objectKey, versionID, reason)
+	return err
+}
+
+func (r Repository) ClaimObjectDeletions(ctx context.Context, limit int) ([]PendingDeletion, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 25
+	}
+	tx, err := r.Pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+	rows, err := tx.Query(ctx, `SELECT id,organization_id,object_key,version_id,attempts FROM storage_deletion_outbox WHERE ((status='pending' AND available_at<=now()) OR (status='processing' AND updated_at < now()-interval '15 minutes')) ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT $1`, limit)
+	if err != nil {
+		return nil, err
+	}
+	deletions := make([]PendingDeletion, 0, limit)
+	for rows.Next() {
+		var item PendingDeletion
+		if err := rows.Scan(&item.ID, &item.OrganizationID, &item.ObjectKey, &item.VersionID, &item.Attempts); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		deletions = append(deletions, item)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	for _, item := range deletions {
+		if _, err := tx.Exec(ctx, `UPDATE storage_deletion_outbox SET status='processing',attempts=attempts+1,updated_at=now() WHERE id=$1`, item.ID); err != nil {
+			return nil, err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return deletions, nil
+}
+
+func (r Repository) CompleteObjectDeletion(ctx context.Context, id uuid.UUID) error {
+	_, err := r.Pool.Exec(ctx, `UPDATE storage_deletion_outbox SET status='completed',last_error='',updated_at=now() WHERE id=$1`, id)
+	return err
+}
+
+func (r Repository) RetryObjectDeletion(ctx context.Context, id uuid.UUID, cause error, attempts int) error {
+	if attempts < 0 {
+		attempts = 0
+	}
+	if attempts > 6 {
+		attempts = 6
+	}
+	delay := time.Duration(1<<attempts) * time.Minute
+	_, err := r.Pool.Exec(ctx, `UPDATE storage_deletion_outbox SET status='pending',available_at=now()+$2::interval,last_error=$3,updated_at=now() WHERE id=$1`, id, delay.String(), cause.Error())
+	return err
+}
+
+// ReconcileStorageQuota derives quota counters from storage_objects so failed
+// cross-system operations cannot permanently skew reserved or used bytes.
+func (r Repository) ReconcileStorageQuota(ctx context.Context) error {
+	_, err := r.Pool.Exec(ctx, `
+		UPDATE storage_pools p
+		SET used_bytes=COALESCE(x.used_bytes,0),
+			reserved_bytes=COALESCE(x.reserved_bytes,0),
+			updated_at=now()
+		FROM (
+			SELECT p2.id,
+				COALESCE(SUM(o.size_bytes) FILTER (WHERE o.status IN ('uploaded','processing','ready')),0) AS used_bytes,
+				COALESCE(SUM(o.expected_size_bytes) FILTER (WHERE o.status='uploading'),0) AS reserved_bytes
+			FROM storage_pools p2
+			LEFT JOIN storage_objects o ON o.organization_id=p2.organization_id AND o.tenant_id IS NOT DISTINCT FROM p2.tenant_id
+			GROUP BY p2.id
+		) x
+		WHERE p.id=x.id`)
+	return err
 }
 
 type Job struct {
