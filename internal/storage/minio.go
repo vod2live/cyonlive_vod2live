@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -55,6 +56,32 @@ func (c *Client) Download(ctx context.Context, key, destination string) error {
 		return err
 	}
 	return c.Minio.FGetObject(ctx, c.Bucket, cleanKey(key), destination, minio.GetObjectOptions{})
+}
+
+func (c *Client) Read(ctx context.Context, key string, maxBytes int64) ([]byte, error) {
+	if maxBytes <= 0 {
+		maxBytes = 8 << 20
+	}
+	object, err := c.Minio.GetObject(ctx, c.Bucket, cleanKey(key), minio.GetObjectOptions{})
+	if err != nil {
+		return nil, err
+	}
+	defer object.Close()
+	info, err := object.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if info.Size > maxBytes {
+		return nil, fmt.Errorf("object exceeds the %d-byte read limit", maxBytes)
+	}
+	body, err := io.ReadAll(io.LimitReader(object, maxBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(body)) > maxBytes {
+		return nil, fmt.Errorf("object exceeds the %d-byte read limit", maxBytes)
+	}
+	return body, nil
 }
 
 func (c *Client) UploadFile(ctx context.Context, key, filename, contentType string) error {

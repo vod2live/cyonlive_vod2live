@@ -34,6 +34,7 @@ import (
 	"github.com/vod2live/cyonlive_vod2live/internal/playout"
 	"github.com/vod2live/cyonlive_vod2live/internal/ratelimit"
 	"github.com/vod2live/cyonlive_vod2live/internal/retry"
+	"github.com/vod2live/cyonlive_vod2live/internal/safefetch"
 	"github.com/vod2live/cyonlive_vod2live/internal/schedule"
 	"github.com/vod2live/cyonlive_vod2live/internal/security"
 	"github.com/vod2live/cyonlive_vod2live/internal/storage"
@@ -64,7 +65,7 @@ func main() {
 	libraryHandler := library.Handler{Repo: library.Repository{Pool: pool}, Storage: objectStore, TenantAccess: identities}
 	channels := channel.PostgresRepository{Pool: pool}
 	schedules := schedule.PostgresRepository{Pool: pool}
-	manifests := manifest.Service{Channels: channels, Assets: assets, Schedules: schedules, Cache: manifest.ManifestCache{Client: redisClient}, Storage: objectStore}
+	manifests := manifest.Service{Channels: channels, Assets: assets, Schedules: schedules, Client: safefetch.NewClient(time.Duration(cfg.HLSRequestTimeoutSecs)*time.Second, cfg.AllowPrivateHLS), Cache: manifest.ManifestCache{Client: redisClient}, Storage: objectStore, AllowPrivate: cfg.AllowPrivateHLS, MaxManifestBytes: cfg.HLSMaxManifestBytes}
 	playbackSigner, err := playback.NewSigner(cfg.PlaybackTokenSecret, time.Duration(cfg.PlaybackTokenTTLSeconds)*time.Second)
 	if err != nil {
 		log.Fatalf("playback configuration: %v", err)
@@ -254,7 +255,7 @@ func validateAsset(repo asset.PostgresRepository, access identity.Repository) ht
 			return
 		}
 		cfg := config.Load()
-		inspection, err := (asset.HLSInspector{AllowPrivate: cfg.AllowPrivateHLS, MaxManifestBytes: cfg.HLSMaxManifestBytes, Timeout: time.Duration(cfg.HLSRequestTimeoutSecs) * time.Second}).Inspect(item.HLSURL)
+		inspection, err := (asset.HLSInspector{AllowPrivate: cfg.AllowPrivateHLS, MaxManifestBytes: cfg.HLSMaxManifestBytes, Timeout: time.Duration(cfg.HLSRequestTimeoutSecs) * time.Second}).InspectContext(r.Context(), item.HLSURL)
 		if err != nil {
 			_ = repo.UpdateStatusInOrg(r.Context(), principal.OrganizationID, id, asset.StatusInvalid, 0, map[string]string{"error": err.Error()})
 			http.Error(w, err.Error(), 422)

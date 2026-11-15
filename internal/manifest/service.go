@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -13,39 +14,59 @@ import (
 	"github.com/google/uuid"
 	"github.com/vod2live/cyonlive_vod2live/internal/asset"
 	"github.com/vod2live/cyonlive_vod2live/internal/channel"
+	"github.com/vod2live/cyonlive_vod2live/internal/safefetch"
 	"github.com/vod2live/cyonlive_vod2live/internal/schedule"
 	"github.com/vod2live/cyonlive_vod2live/internal/storage"
 	"github.com/vod2live/cyonlive_vod2live/pkg/hls"
 )
 
 type Service struct {
-	Channels  channel.PostgresRepository
-	Assets    asset.PostgresRepository
-	Schedules schedule.PostgresRepository
-	Client    *http.Client
-	Cache     ManifestCache
-	Storage   *storage.Client
+	Channels         channel.PostgresRepository
+	Assets           asset.PostgresRepository
+	Schedules        schedule.PostgresRepository
+	Client           *http.Client
+	Cache            ManifestCache
+	Storage          *storage.Client
+	AllowPrivate     bool
+	MaxManifestBytes int64
 }
 
 func (s Service) client() *http.Client {
 	if s.Client != nil {
 		return s.Client
 	}
-	return &http.Client{Timeout: 15 * time.Second}
+	return safefetch.NewClient(15*time.Second, s.AllowPrivate)
 }
 func (s Service) fetch(ctx context.Context, raw string) (string, error) {
+	maxBytes := s.MaxManifestBytes
+	if maxBytes <= 0 {
+		maxBytes = 8 << 20
+	}
 	if strings.HasPrefix(raw, "s3://") {
-		_, key, err := storage.ParseURI(raw)
+		bucket, key, err := storage.ParseURI(raw)
 		if err != nil || s.Storage == nil {
 			return "", fmt.Errorf("storage source unavailable")
 		}
-		presigned, err := s.Storage.PresignedGet(ctx, key, 2*time.Minute)
+		if bucket != s.Storage.Bucket {
+			return "", fmt.Errorf("storage source bucket does not match configured bucket")
+		}
+		body, err := s.Storage.Read(ctx, key, maxBytes)
 		if err != nil {
 			return "", err
 		}
-		raw = presigned.String()
+		return string(body), nil
 	}
-	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, raw, nil)
+	u, err := url.Parse(raw)
+	if err != nil {
+		return "", err
+	}
+	if err := safefetch.ValidateURL(ctx, u, s.AllowPrivate); err != nil {
+		return "", err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, raw, nil)
+	if err != nil {
+		return "", err
+	}
 	resp, err := s.client().Do(req)
 	if err != nil {
 		return "", err
@@ -54,7 +75,13 @@ func (s Service) fetch(ctx context.Context, raw string) (string, error) {
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return "", fmt.Errorf("source HTTP %d", resp.StatusCode)
 	}
-	body, err := io.ReadAll(resp.Body)
+	if resp.ContentLength > maxBytes {
+		return "", fmt.Errorf("source manifest exceeds the %d-byte limit", maxBytes)
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBytes+1))
+	if err == nil && int64(len(body)) > maxBytes {
+		return "", fmt.Errorf("source manifest exceeds the %d-byte limit", maxBytes)
+	}
 	return string(body), err
 }
 func (s Service) Master(ctx context.Context, channelID uuid.UUID) ([]byte, error) {
