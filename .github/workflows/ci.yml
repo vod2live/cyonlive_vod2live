@@ -36,7 +36,7 @@ jobs:
           version: v1.60.3
           args: --timeout=5m
       - run: docker compose config --quiet
-      - run: IMAGE_REF=ghcr.io/vod2live/cyonlive_vod2live:ci DATABASE_URL='postgres://test:test@db:5432/test' REDIS_ADDR=redis:6379 API_KEY=test AUTH_TOKEN_SECRET=test PLAYBACK_TOKEN_SECRET=test METRICS_API_KEY=test CORS_ALLOWED_ORIGIN=https://example.test MINIO_ENDPOINT=minio:9000 MINIO_ROOT_USER=test MINIO_ROOT_PASSWORD=test docker compose -f docker-compose.yml -f deployments/staging/docker-compose.staging.yml config --quiet
+      - run: IMAGE_REF=ghcr.io/vod2live/cyonlive_vod2live:ci DATABASE_URL='postgres://test:test@db:5432/test' REDIS_ADDR=redis:6379 API_KEY=test AUTH_TOKEN_SECRET=test PLAYBACK_TOKEN_SECRET=test METRICS_API_KEY=test CORS_ALLOWED_ORIGIN=https://example.test MINIO_ENDPOINT=minio:9000 MINIO_ROOT_USER=test MINIO_ROOT_PASSWORD=testpassword docker compose -f docker-compose.yml -f deployments/staging/docker-compose.staging.yml config --quiet
       - run: IMAGE_REF=ghcr.io/vod2live/cyonlive_vod2live:ci VERSION=${GITHUB_REF_NAME} COMMIT=${GITHUB_SHA} BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ) docker compose build api
       - run: docker compose build minio
       - run: docker compose up -d --wait --wait-timeout 120 postgres redis hls-fixture
@@ -55,7 +55,7 @@ jobs:
           CORS_ALLOWED_ORIGIN: https://example.test
           MINIO_ENDPOINT: minio:9000
           MINIO_ROOT_USER: test
-          MINIO_ROOT_PASSWORD: test
+          MINIO_ROOT_PASSWORD: testpassword
           MINIO_USE_SSL: "false"
           STAGING_SMOKE_KEEP_SERVICES: "1"
         run: |
