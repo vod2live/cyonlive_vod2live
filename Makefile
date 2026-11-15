@@ -12,7 +12,9 @@ fmt:
 	gofmt -w cmd internal pkg
 
 compose-up:
-	docker compose up --build -d
+	docker compose up -d postgres redis minio hls-fixture
+	$(MAKE) migrate
+	docker compose up --build -d api playout media-worker
 
 compose-down:
 	docker compose down -v

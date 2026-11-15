@@ -409,9 +409,8 @@ As migrações são reaplicáveis e podem ser verificadas com:
 make verify-migrations
 ```
 
-Em ambientes persistentes, use `make migrate`. O executor mantém o advisory lock na mesma sessão PostgreSQL, aplica os arquivos em ordem lexicográfica, registra a versão e o SHA-256 em `schema_migrations` e interrompe a execução se um arquivo já aplicado tiver sido alterado. Para staging, injete `DATABASE_URL` pelo secret manager e execute `docker compose --env-file deployments/staging/.env -f deployments/staging/docker-compose.staging.yml --profile tools run --rm migration-runner` antes de promover os serviços; o CI também aplica as migrações antes de iniciar API e playout.
-
-O runbook de recuperação, RPO/RTO e rollback está em [`deployments/staging/RUNBOOK.md`](deployments/staging/RUNBOOK.md).
+Em ambientes persistentes, use `make migrate` para aplicar migrations e `make verify-migrations` para verificar checksums sem alterar o banco. O executor mantém o advisory lock na mesma sessão PostgreSQL, aplica os arquivos em ordem lexicográfica, registra a versão e o SHA-256 em `schema_migrations` e interrompe a execução se um arquivo já aplicado tiver sido alterado. Para staging, injete `DATABASE_URL` pelo secret manager e execute `docker compose --env-file deployments/staging/.env -f deployments/staging/docker-compose.staging.yml --profile tools run --rm migration-runner` antes de promover os serviços; o CI aplica explicitamente as migrations e depois executa a verificação somente leitura.
+O alvo `make compose-up` sobe primeiro a infraestrutura, aplica as migrations e só então inicia API e workers. O runbook de recuperação, RPO/RTO e rollback está em [`deployments/staging/RUNBOOK.md`](deployments/staging/RUNBOOK.md).
 
 Objetivos operacionais documentados:
 
