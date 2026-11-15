@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -97,10 +98,17 @@ func (r PostgresRepository) Current(ctx context.Context, channelID uuid.UUID, at
 	err := r.Pool.QueryRow(ctx, `SELECT s.id,s.organization_id,s.channel_id,s.asset_id,s.starts_at,s.ends_at,s.position,s.enabled
  FROM schedule_items s JOIN channels c ON c.id=s.channel_id AND c.organization_id=s.organization_id
  JOIN assets a ON a.id=s.asset_id AND a.organization_id=s.organization_id
- WHERE s.channel_id=$1 AND s.enabled=true AND s.starts_at<=$2 AND (s.ends_at IS NULL OR s.ends_at>$2)
+ WHERE s.channel_id=$1 AND s.enabled=true AND s.starts_at<=$2
+   AND (
+     (s.ends_at IS NOT NULL AND s.ends_at>$2)
+     OR (s.ends_at IS NULL AND (a.duration_ms IS NULL OR a.duration_ms<=0 OR s.starts_at + a.duration_ms * interval '1 millisecond' > $2))
+   )
    AND a.status='valid' AND (a.library_id IS NULL OR a.approval_status='approved')
    AND (a.tenant_id IS NULL OR a.tenant_id=c.tenant_id)
- ORDER BY s.position LIMIT 1`, channelID, at).Scan(&item.ID, &item.OrganizationID, &item.ChannelID, &item.AssetID, &item.StartsAt, &item.EndsAt, &item.Position, &item.Enabled)
+ ORDER BY s.starts_at,s.position LIMIT 1`, channelID, at).Scan(&item.ID, &item.OrganizationID, &item.ChannelID, &item.AssetID, &item.StartsAt, &item.EndsAt, &item.Position, &item.Enabled)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Item{}, ErrNotFound
+	}
 	return item, err
 }
 

@@ -2,6 +2,7 @@ package playout
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -26,32 +27,9 @@ func (w Worker) Tick(ctx context.Context, channelID uuid.UUID) error {
 		return err
 	}
 	defer w.Store.ReleaseLease(ctx, channelID, w.Owner, token)
-	items, err := w.Schedules.List(ctx, channelID)
-	if err != nil {
-		return err
-	}
 	now := time.Now().UTC()
-	var current *schedule.Item
-	for i := range items {
-		item := items[i]
-		if !item.Enabled || item.StartsAt.After(now) {
-			continue
-		}
-		assetItem, assetErr := w.Assets.FindByID(ctx, item.AssetID)
-		if assetErr != nil {
-			continue
-		}
-		end := item.EndsAt
-		if end == nil && assetItem.DurationMS > 0 {
-			derived := item.StartsAt.Add(time.Duration(assetItem.DurationMS) * time.Millisecond)
-			end = &derived
-		}
-		if end == nil || now.Before(*end) {
-			current = &item
-			break
-		}
-	}
-	if current == nil {
+	current, err := w.Schedules.Current(ctx, channelID, now)
+	if errors.Is(err, schedule.ErrNotFound) {
 		if renewed, renewErr := w.Store.RenewLease(ctx, channelID, w.Owner, token, leaseTTL); renewErr != nil {
 			return renewErr
 		} else if !renewed {
@@ -59,6 +37,9 @@ func (w Worker) Tick(ctx context.Context, channelID uuid.UUID) error {
 		}
 		_, putErr := w.Store.PutFenced(ctx, State{ChannelID: channelID, Status: "idle", FencingToken: token, UpdatedAt: now}, w.Owner, 30*time.Second)
 		return putErr
+	}
+	if err != nil {
+		return err
 	}
 	assetItem, err := w.Assets.FindByID(ctx, current.AssetID)
 	if err != nil {
