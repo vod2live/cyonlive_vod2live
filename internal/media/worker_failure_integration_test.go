@@ -59,7 +59,7 @@ func runWorkerFailureCase(t *testing.T, ctx context.Context, pool *pgxpool.Pool,
 	if err != nil {
 		t.Fatalf("begin fixture transaction: %v", err)
 	}
-	defer tx.Rollback(context.Background())
+	defer func() { _ = tx.Rollback(context.Background()) }()
 	if _, err = tx.Exec(ctx, `INSERT INTO organizations(id,name,slug) VALUES($1,$2,$3)`, orgID, "Worker failure test", "worker-failure-"+orgID.String()); err != nil {
 		t.Fatalf("insert organization: %v", err)
 	}
@@ -89,7 +89,7 @@ func runWorkerFailureCase(t *testing.T, ctx context.Context, pool *pgxpool.Pool,
 			t.Errorf("begin fixture cleanup: %v", cleanupErr)
 			return
 		}
-		defer cleanupTx.Rollback(cleanupCtx)
+		defer func() { _ = cleanupTx.Rollback(cleanupCtx) }()
 		for _, fixture := range []struct {
 			query string
 			id    uuid.UUID

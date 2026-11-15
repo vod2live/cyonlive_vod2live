@@ -1,12 +1,19 @@
 APP=vod2live
 
-.PHONY: run test fmt compose-up compose-down e2e contract load-test playback-load-test ha-smoke migrate verify-migrations db-backup db-verify-backup db-restore
+.PHONY: run test coverage lint fmt compose-up compose-down e2e contract load-test playback-load-test ha-smoke migrate verify-migrations db-backup db-verify-backup db-restore
 
 run:
 	go run ./cmd/api
 
 test:
 	GOTOOLCHAIN=local go test ./...
+
+coverage:
+	go test -covermode=atomic -coverprofile=coverage.out ./...
+	go tool cover -func=coverage.out
+
+lint:
+	golangci-lint run --timeout=5m
 
 fmt:
 	gofmt -w cmd internal pkg

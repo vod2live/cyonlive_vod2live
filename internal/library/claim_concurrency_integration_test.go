@@ -44,7 +44,7 @@ func TestClaimJobConcurrentWorkersClaimJobOnce(t *testing.T) {
 	if err != nil {
 		t.Fatalf("begin fixture transaction: %v", err)
 	}
-	defer tx.Rollback(context.Background())
+	defer func() { _ = tx.Rollback(context.Background()) }()
 	_, err = tx.Exec(ctx, `INSERT INTO organizations(id,name,slug) VALUES($1,$2,$3)`, organizationID, "Claim concurrency test", "claim-concurrency-"+organizationID.String())
 	if err != nil {
 		t.Fatalf("insert organization fixture: %v", err)
@@ -78,7 +78,7 @@ func TestClaimJobConcurrentWorkersClaimJobOnce(t *testing.T) {
 			t.Errorf("begin fixture cleanup: %v", cleanupErr)
 			return
 		}
-		defer cleanupTx.Rollback(cleanupCtx)
+		defer func() { _ = cleanupTx.Rollback(cleanupCtx) }()
 		for _, fixture := range []struct {
 			query string
 			id    uuid.UUID

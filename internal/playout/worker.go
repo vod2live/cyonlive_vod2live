@@ -26,7 +26,7 @@ func (w Worker) Tick(ctx context.Context, channelID uuid.UUID) error {
 	if err != nil || !locked {
 		return err
 	}
-	defer w.Store.ReleaseLease(ctx, channelID, w.Owner, token)
+	defer func() { _ = w.Store.ReleaseLease(ctx, channelID, w.Owner, token) }()
 	now := time.Now().UTC()
 	current, err := w.Schedules.Current(ctx, channelID, now)
 	if errors.Is(err, schedule.ErrNotFound) {

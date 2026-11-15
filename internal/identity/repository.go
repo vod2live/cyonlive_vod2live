@@ -47,7 +47,7 @@ func (r Repository) Bootstrap(ctx context.Context, email, passwordHash, organiza
 	if err != nil {
 		return uuid.Nil, uuid.Nil, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	if _, err = tx.Exec(ctx, `SELECT pg_advisory_xact_lock(140014)`); err != nil {
 		return uuid.Nil, uuid.Nil, err
 	}
@@ -155,7 +155,7 @@ func (r Repository) CreateOrganization(ctx context.Context, userID uuid.UUID, na
 	if err != nil {
 		return Organization{}, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	var item Organization
 	err = tx.QueryRow(ctx, `INSERT INTO organizations(name,slug) VALUES($1,$2) RETURNING id,name,slug`, name, slug).Scan(&item.ID, &item.Name, &item.Slug)
 	if err != nil {
@@ -180,7 +180,7 @@ func (r Repository) CreateUser(ctx context.Context, organizationID uuid.UUID, em
 	if err != nil {
 		return User{}, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	var item User
 	err = tx.QueryRow(ctx, `SELECT id,email FROM users WHERE lower(email)=lower($1) FOR UPDATE`, email).Scan(&item.ID, &item.Email)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -231,7 +231,7 @@ func (r Repository) UpdateRole(ctx context.Context, organizationID, userID uuid.
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	if _, err = tx.Exec(ctx, `SELECT id FROM organizations WHERE id=$1 FOR UPDATE`, organizationID); err != nil {
 		return err
 	}
@@ -263,7 +263,7 @@ func (r Repository) RemoveUser(ctx context.Context, organizationID, userID uuid.
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	if _, err = tx.Exec(ctx, `SELECT id FROM organizations WHERE id=$1 FOR UPDATE`, organizationID); err != nil {
 		return err
 	}

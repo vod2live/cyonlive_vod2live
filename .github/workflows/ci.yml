@@ -15,10 +15,26 @@ jobs:
         with:
           go-version: '1.22'
       - run: go test ./...
+      - name: Go coverage
+        run: |
+          go test -covermode=atomic -coverprofile=coverage.out ./...
+          go tool cover -func=coverage.out
+      - name: Upload Go coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: go-coverage-${{ github.run_id }}
+          path: coverage.out
+          if-no-files-found: error
+          retention-days: 14
       - name: Check Go formatting
         run: test -z "$(gofmt -l $(find cmd internal pkg -name '*.go' -print))"
       - run: go vet ./...
       - run: go test -race ./...
+      - name: Go lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: v1.60.3
+          args: --timeout=5m
       - run: docker compose config --quiet
       - run: IMAGE_REF=ghcr.io/vod2live/cyonlive_vod2live:ci DATABASE_URL='postgres://test:test@db:5432/test' REDIS_ADDR=redis:6379 API_KEY=test AUTH_TOKEN_SECRET=test PLAYBACK_TOKEN_SECRET=test CORS_ALLOWED_ORIGIN=https://example.test MINIO_ENDPOINT=minio:9000 MINIO_ROOT_USER=test MINIO_ROOT_PASSWORD=test docker compose -f docker-compose.yml -f deployments/staging/docker-compose.staging.yml config --quiet
       - run: IMAGE_REF=ghcr.io/vod2live/cyonlive_vod2live:ci VERSION=${GITHUB_REF_NAME} COMMIT=${GITHUB_SHA} BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ) docker compose build api

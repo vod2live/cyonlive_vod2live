@@ -1,14 +1,12 @@
 package asset
 
 import (
-	"bufio"
 	"context"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
-	"strconv"
 	"strings"
 	"time"
 
@@ -126,22 +124,4 @@ func inspectManifest(ctx context.Context, client *http.Client, rawURL string, de
 		return Inspection{}, errors.New("media playlist sem segmentos EXTINF")
 	}
 	return result, nil
-}
-
-func scanManifest(text string) (duration float64, segments int, target float64) {
-	s := bufio.NewScanner(strings.NewReader(text))
-	for s.Scan() {
-		line := strings.TrimSpace(s.Text())
-		if strings.HasPrefix(line, "#EXTINF:") {
-			value := strings.TrimSuffix(strings.TrimPrefix(line, "#EXTINF:"), ",")
-			if d, e := strconv.ParseFloat(value, 64); e == nil {
-				duration += d
-				segments++
-			}
-		}
-		if strings.HasPrefix(line, "#EXT-X-TARGETDURATION:") {
-			target, _ = strconv.ParseFloat(strings.TrimPrefix(line, "#EXT-X-TARGETDURATION:"), 64)
-		}
-	}
-	return
 }

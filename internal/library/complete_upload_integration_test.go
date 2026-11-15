@@ -37,7 +37,7 @@ func TestCompleteUploadOversizePersistsFailureAndReleasesReservation(t *testing.
 	if err != nil {
 		t.Fatalf("begin fixture transaction: %v", err)
 	}
-	defer tx.Rollback(context.Background())
+	defer func() { _ = tx.Rollback(context.Background()) }()
 	if _, err = tx.Exec(ctx, `INSERT INTO organizations(id,name,slug) VALUES($1,$2,$3)`, orgID, "Complete upload test", "complete-upload-"+orgID.String()); err != nil {
 		t.Fatalf("insert organization fixture: %v", err)
 	}

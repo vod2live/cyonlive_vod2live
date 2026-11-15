@@ -148,7 +148,7 @@ func (r Repository) ReserveUpload(ctx context.Context, org uuid.UUID, tenant *uu
 	if err != nil {
 		return Upload{}, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	var available int64
 	if err = tx.QueryRow(ctx, `SELECT quota_bytes-used_bytes-reserved_bytes FROM storage_pools WHERE organization_id=$1 AND tenant_id IS NOT DISTINCT FROM $2 FOR UPDATE`, org, tenant).Scan(&available); err != nil {
 		return Upload{}, fmt.Errorf("quota unavailable: %w", err)
@@ -185,7 +185,7 @@ func (r Repository) CompleteUpload(ctx context.Context, org, objectID uuid.UUID,
 	if err != nil {
 		return Upload{}, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	var u Upload
 	var old int64
 	var tenant *uuid.UUID
@@ -351,7 +351,7 @@ func (r Repository) ClaimObjectDeletions(ctx context.Context, limit int) ([]Pend
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	rows, err := tx.Query(ctx, `SELECT id,organization_id,object_key,version_id,attempts FROM storage_deletion_outbox WHERE ((status='pending' AND available_at<=now()) OR (status='processing' AND updated_at < now()-interval '15 minutes')) ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT $1`, limit)
 	if err != nil {
 		return nil, err
@@ -463,7 +463,7 @@ func (r Repository) ReprocessDeadJob(ctx context.Context, organizationID, userID
 	if err != nil {
 		return ReprocessedJob{}, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	var status string
 	var tenantIDValue uuid.UUID
 	err = tx.QueryRow(ctx, `SELECT status,COALESCE(tenant_id,'00000000-0000-0000-0000-000000000000') FROM media_jobs WHERE id=$1 AND organization_id=$2 FOR UPDATE`, jobID, organizationID).Scan(&status, &tenantIDValue)
@@ -510,7 +510,7 @@ func (r Repository) ClaimJob(ctx context.Context) (Job, error) {
 	if err != nil {
 		return Job{}, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	// A worker that exhausted its retry budget may die after its lease expires.
 	// Close that state here so it cannot remain processing forever. This runs in
 	// the same transaction as the next claim and is therefore safe under load.
@@ -572,7 +572,7 @@ func (r Repository) FinishJob(ctx context.Context, j Job, hlsURI string, storage
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	if errMsg == "" {
 		delta := storageBytes
 		if !keepSource {

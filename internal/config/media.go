@@ -1,7 +1,5 @@
 package config
 
-import "os"
-
 type MediaConfig struct {
 	StorageEndpoint         string
 	StorageAccessKey        string
@@ -34,8 +32,4 @@ func LoadMedia() MediaConfig {
 		AbandonedUploadTTLHours: intEnv("MEDIA_ABANDONED_UPLOAD_TTL_HOURS", 24),
 		CleanupIntervalSeconds:  intEnv("MEDIA_CLEANUP_INTERVAL_SECONDS", 900),
 	}
-}
-
-func storageEnvPresent() bool {
-	return os.Getenv("MINIO_ENDPOINT") != ""
 }

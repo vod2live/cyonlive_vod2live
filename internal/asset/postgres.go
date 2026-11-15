@@ -129,7 +129,7 @@ func (r PostgresRepository) Review(ctx context.Context, organizationID, assetID,
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	result, err := tx.Exec(ctx, `UPDATE assets SET approval_status=$1,reviewed_by=$2,reviewed_at=now(),review_note=$3,updated_at=now() WHERE id=$4 AND organization_id=$5 AND library_id IS NOT NULL AND status='valid' AND approval_status='pending'`, status, reviewerID, strings.TrimSpace(note), assetID, organizationID)
 	if err != nil {
 		return err

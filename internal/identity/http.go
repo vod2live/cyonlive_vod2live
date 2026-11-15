@@ -24,11 +24,6 @@ type Handler struct {
 	BootstrapKey string
 }
 
-type credentials struct {
-	Email    string `json:"email"`
-	Password string `json:"password"`
-}
-
 type bootstrapRequest struct {
 	Email            string `json:"email"`
 	Password         string `json:"password"`

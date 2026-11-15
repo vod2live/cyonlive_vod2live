@@ -518,15 +518,19 @@ make playback-load-test
 O CI executa:
 
 1. `go test ./...`;
-2. validação do Compose;
-3. build da API e do worker;
-4. PostgreSQL, Redis e fixture HLS;
-5. E2E e contrato HTTP;
-6. smoke de fencing Redis;
-7. carga de playback;
-8. carga de endpoints operacionais;
-9. verificação de migrações;
-10. dump e validação básica do PostgreSQL.
+2. relatório de cobertura (`go test -covermode=atomic`), arquivado por 14 dias;
+3. formatação, `go vet`, `go test -race` e lint Go;
+4. validação do Compose;
+5. build da API e do worker;
+6. PostgreSQL, Redis e fixture HLS;
+7. E2E e contrato HTTP;
+8. smoke de fencing Redis;
+9. carga de playback;
+10. carga de endpoints operacionais;
+11. verificação de migrações;
+12. dump e validação básica do PostgreSQL.
+
+Os mesmos gates locais podem ser executados com `make coverage` e `make lint`.
 
 A validação integrada precisa ser executada em um runner com Docker habilitado.
 

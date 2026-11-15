@@ -755,7 +755,7 @@ func masterManifest(channels channel.PostgresRepository, access identity.Reposit
 			return
 		}
 		w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
-		w.Write(body)
+		_, _ = w.Write(body)
 	}
 }
 func mediaManifest(channels channel.PostgresRepository, access identity.Repository, service manifest.Service) http.HandlerFunc {
@@ -784,7 +784,7 @@ func mediaManifest(channels channel.PostgresRepository, access identity.Reposito
 		}
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
-		w.Write(body)
+		_, _ = w.Write(body)
 	}
 }
 func writeJSON(w http.ResponseWriter, status int, value any) {
