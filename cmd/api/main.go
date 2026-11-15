@@ -254,7 +254,17 @@ func getAsset(repo asset.PostgresRepository, access identity.Repository) http.Ha
 		writeJSON(w, 200, item)
 	}
 }
-func validateAsset(repo asset.PostgresRepository, access identity.Repository) http.HandlerFunc {
+
+type assetValidationRepository interface {
+	FindByIDInOrg(context.Context, uuid.UUID, uuid.UUID) (asset.Asset, error)
+	UpdateStatusInOrg(context.Context, uuid.UUID, uuid.UUID, asset.Status, int64, any) error
+}
+
+type assetValidationAccess interface {
+	UserCanAccessAsset(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) (bool, error)
+}
+
+func validateAsset(repo assetValidationRepository, access assetValidationAccess) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id, err := uuid.Parse(chi.URLParam(r, "id"))
 		if err != nil {
@@ -278,11 +288,18 @@ func validateAsset(repo asset.PostgresRepository, access identity.Repository) ht
 		cfg := config.Load()
 		inspection, err := (asset.HLSInspector{AllowPrivate: cfg.AllowPrivateHLS, MaxManifestBytes: cfg.HLSMaxManifestBytes, Timeout: time.Duration(cfg.HLSRequestTimeoutSecs) * time.Second}).InspectContext(r.Context(), item.HLSURL)
 		if err != nil {
-			_ = repo.UpdateStatusInOrg(r.Context(), principal.OrganizationID, id, asset.StatusInvalid, 0, map[string]string{"error": err.Error()})
-			http.Error(w, err.Error(), 422)
+			safeErr := asset.RedactText(err.Error())
+			if persistErr := repo.UpdateStatusInOrg(r.Context(), principal.OrganizationID, id, asset.StatusInvalid, 0, map[string]string{"error": safeErr}); persistErr != nil {
+				http.Error(w, "falha ao persistir o resultado da validação", http.StatusInternalServerError)
+				return
+			}
+			http.Error(w, safeErr, 422)
 			return
 		}
-		_ = repo.UpdateStatusInOrg(r.Context(), principal.OrganizationID, id, asset.StatusValid, inspection.DurationMS, inspection)
+		if err := repo.UpdateStatusInOrg(r.Context(), principal.OrganizationID, id, asset.StatusValid, inspection.DurationMS, inspection); err != nil {
+			http.Error(w, "falha ao persistir o resultado da validação", http.StatusInternalServerError)
+			return
+		}
 		writeJSON(w, 200, inspection)
 	}
 }

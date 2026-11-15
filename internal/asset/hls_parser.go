@@ -87,7 +87,7 @@ func inspectManifest(ctx context.Context, client *http.Client, rawURL string, de
 	if !strings.HasPrefix(strings.TrimSpace(text), "#EXTM3U") {
 		return Inspection{}, errors.New("manifesto não começa com #EXTM3U")
 	}
-	result := Inspection{URL: rawURL, ContentType: resp.Header.Get("Content-Type"), Bytes: int64(len(body))}
+	result := Inspection{URL: RedactURL(rawURL), ContentType: resp.Header.Get("Content-Type"), Bytes: int64(len(body))}
 	result.IsMaster = strings.Contains(text, "#EXT-X-STREAM-INF")
 	if result.IsMaster {
 		master, err := hls.ParseMaster(text)
