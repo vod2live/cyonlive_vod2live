@@ -4,7 +4,6 @@ import (
 	"net"
 	"net/http"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 )
@@ -52,10 +51,10 @@ func (l *Limiter) Middleware(next http.Handler) http.Handler {
 	})
 }
 func clientIP(r *http.Request) string {
-	forwarded := r.Header.Get("X-Forwarded-For")
-	if forwarded != "" {
-		return strings.TrimSpace(strings.Split(forwarded, ",")[0])
-	}
+	// Do not trust X-Forwarded-For without an explicit trusted-proxy policy.
+	// Using the peer address prevents clients from bypassing the limiter by
+	// supplying an arbitrary forwarded header. A proxy-aware policy can be
+	// introduced later by validating the peer against configured proxy CIDRs.
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err == nil {
 		return host

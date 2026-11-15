@@ -23,3 +23,13 @@ func TestLimiterBlocksAfterLimit(t *testing.T) {
 		t.Fatalf("got %d", rr.Code)
 	}
 }
+
+func TestClientIPIgnoresUntrustedForwardedHeader(t *testing.T) {
+	req := httptest.NewRequest("GET", "http://example.test", nil)
+	req.RemoteAddr = "192.0.2.10:54321"
+	req.Header.Set("X-Forwarded-For", "198.51.100.20")
+
+	if got, want := clientIP(req), "192.0.2.10"; got != want {
+		t.Fatalf("clientIP() = %q, want %q", got, want)
+	}
+}

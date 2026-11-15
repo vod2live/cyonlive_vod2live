@@ -118,6 +118,7 @@ func main() {
 	})
 	r.Route("/v1", func(v1 chi.Router) {
 		v1.Use(limiter.Middleware)
+		v1.Use(limitJSONBody)
 		v1.With(auth.APIKey(cfg.APIKey)).Post("/auth/bootstrap", identityHandler.Bootstrap)
 		v1.Post("/auth/login", identityHandler.Login)
 		v1.Group(func(api chi.Router) {
@@ -168,7 +169,15 @@ func main() {
 			api.With(auth.RequireOperation(auth.OperationWriteSchedule)).Delete("/schedule/{id}", deleteScheduleItem(identities, schedules))
 		})
 	})
-	server := &http.Server{Addr: cfg.HTTPAddr, Handler: r, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 60 * time.Second}
+	server := &http.Server{
+		Addr:              cfg.HTTPAddr,
+		Handler:           r,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       60 * time.Second,
+		MaxHeaderBytes:    1 << 20,
+	}
 	serverErr := make(chan error, 1)
 	go func() { log.Printf("vod2live api listening on %s", cfg.HTTPAddr); serverErr <- server.ListenAndServe() }()
 	stopCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -185,6 +194,15 @@ func main() {
 	if err := server.Shutdown(shutdownCtx); err != nil {
 		log.Printf("graceful shutdown: %v", err)
 	}
+}
+
+const maxJSONBodyBytes int64 = 1 << 20
+
+func limitJSONBody(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.Body = http.MaxBytesReader(w, r.Body, maxJSONBodyBytes)
+		next.ServeHTTP(w, r)
+	})
 }
 
 type assetRequest struct {
