@@ -16,12 +16,13 @@ run_one() {
   [ "$code" = "200" ] || { printf '%s %s\n' "$endpoint" "$code"; return 1; }
 }
 export BASE_URL
-export -f run_one 2>/dev/null || true
 
 failures=0
 for endpoint in /healthz /readyz /version; do
   if command -v xargs >/dev/null 2>&1; then
+    set +e
     failed=$(seq "$REQUESTS" | xargs -P "$CONCURRENCY" -I{} sh -c 'code=$(curl --connect-timeout 3 --max-time 10 --silent --output /dev/null --write-out "%{http_code}" "$BASE_URL$0" || printf "000"); [ "$code" = "200" ] || printf "%s\n" "$code"' "$endpoint" | wc -l | tr -d ' ')
+    set -e
   else
     failed=0
     i=0
