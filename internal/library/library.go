@@ -186,8 +186,16 @@ func (r Repository) CompleteUpload(ctx context.Context, org, objectID uuid.UUID,
 		return u, fmt.Errorf("uploaded object is empty")
 	}
 	if actualBytes > u.ExpectedBytes {
-		_, _ = tx.Exec(ctx, `UPDATE storage_objects SET status='failed',size_bytes=$1,updated_at=now() WHERE id=$2`, actualBytes, objectID)
-		_, _ = tx.Exec(ctx, `UPDATE storage_pools SET reserved_bytes=GREATEST(reserved_bytes-$1,0),updated_at=now() WHERE organization_id=$2 AND tenant_id IS NOT DISTINCT FROM $3`, u.ExpectedBytes, org, tenant)
+		if _, err = tx.Exec(ctx, `UPDATE storage_objects SET status='failed',size_bytes=$1,updated_at=now() WHERE id=$2`, actualBytes, objectID); err != nil {
+			return u, err
+		}
+		if _, err = tx.Exec(ctx, `UPDATE storage_pools SET reserved_bytes=GREATEST(reserved_bytes-$1,0),updated_at=now() WHERE organization_id=$2 AND tenant_id IS NOT DISTINCT FROM $3`, u.ExpectedBytes, org, tenant); err != nil {
+			return u, err
+		}
+		if err = tx.Commit(ctx); err != nil {
+			return u, err
+		}
+		u.Status = "failed"
 		return u, fmt.Errorf("uploaded object exceeds reserved size")
 	}
 	if _, err = tx.Exec(ctx, `UPDATE storage_objects SET size_bytes=$1,status='uploaded',updated_at=now() WHERE id=$2`, actualBytes, objectID); err != nil {
