@@ -64,12 +64,10 @@ jobs:
       - name: Export staging endpoints for integration tests
         run: |
           api_id=$(docker ps --filter label=com.docker.compose.service=api --format '{{.ID}}' | head -n 1)
-          hls_id=$(docker ps --filter label=com.docker.compose.service=hls-fixture --format '{{.ID}}' | head -n 1)
           api_ip=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$api_id")
-          hls_ip=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$hls_id")
           {
             echo "BASE_URL=http://${api_ip}:8080"
-            echo "HLS_URL=http://${hls_ip}:8000/master.m3u8"
+            echo "HLS_URL=http://hls-fixture:8000/master.m3u8"
             echo "API_KEY=ci-test-api-key"
             echo "METRICS_API_KEY=ci-test-metrics-key"
             echo "PHASE14_ADMIN_PASSWORD=phase14-test-password"
