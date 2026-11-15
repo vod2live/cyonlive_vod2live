@@ -14,9 +14,14 @@ RUN set -eu; \
     done
 
 FROM alpine:3.21
-RUN apk add --no-cache ca-certificates wget ffmpeg
+RUN apk add --no-cache ca-certificates wget ffmpeg \
+    && addgroup -S -g 65532 app \
+    && adduser -S -D -H -u 65532 -G app app \
+    && mkdir -p /tmp/vod2live-media \
+    && chown -R 65532:65532 /tmp/vod2live-media
 COPY --from=build /out/ /usr/local/bin/
 COPY deployments/docker/entrypoint.sh /entrypoint.sh
 RUN chmod 0555 /entrypoint.sh
+USER 65532:65532
 EXPOSE 8080
 ENTRYPOINT ["/entrypoint.sh"]

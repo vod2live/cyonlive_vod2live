@@ -30,8 +30,22 @@ services:
       MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD is required}
       MINIO_BUCKET: ${MINIO_BUCKET:-vod2live}
       MINIO_USE_SSL: ${MINIO_USE_SSL:-true}
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: ${API_MEMORY_LIMIT:-512m}
+    cpus: ${API_CPU_LIMIT:-1.0}
+    pids_limit: ${API_PIDS_LIMIT:-256}
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,noexec,size=64m
     depends_on: !reset []
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/readyz"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 15s
 
   playout:
     image: ${IMAGE_REF:?IMAGE_REF must reference the shared image by digest}
@@ -39,6 +53,14 @@ services:
       SERVICE: playout
       DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
       REDIS_ADDR: ${REDIS_ADDR:?REDIS_ADDR is required}
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: ${PLAYOUT_MEMORY_LIMIT:-256m}
+    cpus: ${PLAYOUT_CPU_LIMIT:-0.5}
+    pids_limit: ${PLAYOUT_PIDS_LIMIT:-128}
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,noexec,size=32m
     depends_on: !reset []
     restart: unless-stopped
 
@@ -55,11 +77,26 @@ services:
       MINIO_BUCKET: ${MINIO_BUCKET:-vod2live}
       MINIO_USE_SSL: ${MINIO_USE_SSL:-true}
       MEDIA_KEEP_ORIGINAL: ${MEDIA_KEEP_ORIGINAL:-false}
+      MEDIA_TEMP_DIR: /tmp/vod2live-media
       MEDIA_METRICS_ADDR: :9091
       MEDIA_ABANDONED_UPLOAD_TTL_HOURS: ${MEDIA_ABANDONED_UPLOAD_TTL_HOURS:-24}
       MEDIA_CLEANUP_INTERVAL_SECONDS: ${MEDIA_CLEANUP_INTERVAL_SECONDS:-900}
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: ${MEDIA_WORKER_MEMORY_LIMIT:-2g}
+    cpus: ${MEDIA_WORKER_CPU_LIMIT:-2.0}
+    pids_limit: ${MEDIA_WORKER_PIDS_LIMIT:-256}
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,noexec,size=2g
     depends_on: !reset []
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9091/metrics"]
+      interval: 15s
+      timeout: 5s
+      retries: 6
+      start_period: 15s
 
   migration-runner:
     image: postgres:16-alpine
