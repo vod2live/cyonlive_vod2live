@@ -12,3 +12,7 @@ scrape_configs:
     metrics_path: /metrics
     static_configs:
       - targets: ['media-worker:9091']
+  - job_name: vod2live-playout
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['playout:9092']

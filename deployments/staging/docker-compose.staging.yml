@@ -49,8 +49,11 @@ services:
 
   playout:
     image: ${IMAGE_REF:?IMAGE_REF must reference the shared image by digest}
+    expose:
+      - "9092"
     environment:
       SERVICE: playout
+      PLAYOUT_METRICS_ADDR: :9092
       DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
       REDIS_ADDR: ${REDIS_ADDR:?REDIS_ADDR is required}
     read_only: true
@@ -63,6 +66,12 @@ services:
       - /tmp:rw,nosuid,nodev,noexec,size=32m
     depends_on: !reset []
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9092/readyz"]
+      interval: 15s
+      timeout: 5s
+      retries: 6
+      start_period: 15s
 
   media-worker:
     image: ${IMAGE_REF:?IMAGE_REF must reference the shared image by digest}

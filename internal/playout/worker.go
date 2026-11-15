@@ -16,6 +16,7 @@ type Worker struct {
 	Assets    asset.PostgresRepository
 	Owner     string
 	Interval  time.Duration
+	OnTick    func(error)
 }
 
 func (w Worker) Tick(ctx context.Context, channelID uuid.UUID) error {
@@ -90,7 +91,16 @@ func (w Worker) Run(ctx context.Context, channels func(context.Context) ([]uuid.
 			return fmt.Errorf("list running channels: %w", err)
 		}
 		for _, id := range ids {
-			_ = w.Tick(ctx, id)
+			err := w.Tick(ctx, id)
+			if err != nil {
+				if w.OnTick != nil {
+					w.OnTick(err)
+				}
+				continue
+			}
+			if w.OnTick != nil {
+				w.OnTick(nil)
+			}
 		}
 		select {
 		case <-ctx.Done():

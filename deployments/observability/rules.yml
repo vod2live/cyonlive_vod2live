@@ -16,3 +16,18 @@ groups:
         for: 5m
         labels: { severity: warning }
         annotations: { summary: "Falhas de autenticação de playback elevadas" }
+      - alert: Vod2LivePlayoutUnavailable
+        expr: up{job="vod2live-playout"} == 0
+        for: 2m
+        labels: { severity: critical }
+        annotations: { summary: "Métricas do playout indisponíveis" }
+      - alert: Vod2LivePlayoutErrors
+        expr: rate(vod2live_playout_errors_total[5m]) > 0
+        for: 5m
+        labels: { severity: warning }
+        annotations: { summary: "Falhas persistentes no worker de playout" }
+      - alert: Vod2LiveMediaWorkerFailed
+        expr: vod2live_media_worker_state{state="failed"} == 1
+        for: 5m
+        labels: { severity: critical }
+        annotations: { summary: "Media worker em estado de falha" }

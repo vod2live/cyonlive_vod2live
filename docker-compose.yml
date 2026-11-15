@@ -55,9 +55,12 @@ services:
 
   playout:
     image: ${IMAGE_REF:-ghcr.io/vod2live/cyonlive_vod2live:dev}
+    expose:
+      - "9092"
     stop_grace_period: 15s
     environment:
       SERVICE: playout
+      PLAYOUT_METRICS_ADDR: :9092
       DATABASE_URL: postgres://vod2live:vod2live@postgres:5432/vod2live?sslmode=disable
       REDIS_ADDR: redis:6379
     depends_on:

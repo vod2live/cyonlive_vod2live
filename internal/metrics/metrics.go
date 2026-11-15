@@ -20,6 +20,8 @@ type Metrics struct {
 	Requests         atomic.Uint64
 	Errors           atomic.Uint64
 	ManifestRequests atomic.Uint64
+	PlayoutTicks     atomic.Uint64
+	PlayoutErrors    atomic.Uint64
 	mu               sync.Mutex
 	byStatus         map[int]uint64
 	latencyCount     uint64
@@ -65,6 +67,13 @@ func (m *Metrics) ObserveMediaJob(status string, duration time.Duration) {
 		}
 	}
 	m.mediaDurations[status] = summary
+}
+
+func (m *Metrics) ObservePlayoutTick(err error) {
+	m.PlayoutTicks.Add(1)
+	if err != nil {
+		m.PlayoutErrors.Add(1)
+	}
 }
 
 func (m *Metrics) SetMediaWorkerState(state string) {
@@ -119,6 +128,8 @@ func (m *Metrics) Handler(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "vod2live_http_errors_total %d\n", m.Errors.Load())
 	fmt.Fprintf(w, "vod2live_auth_failures_total %d\n", auth.AuthFailures())
 	fmt.Fprintf(w, "vod2live_manifest_requests_total %d\n", m.ManifestRequests.Load())
+	fmt.Fprintf(w, "vod2live_playout_ticks_total %d\n", m.PlayoutTicks.Load())
+	fmt.Fprintf(w, "vod2live_playout_errors_total %d\n", m.PlayoutErrors.Load())
 	fmt.Fprintln(w, "vod2live_ready 1")
 	fmt.Fprintln(w, "vod2live_last_status_code "+strconv.Itoa(http.StatusOK))
 	m.mu.Lock()

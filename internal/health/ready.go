@@ -1,7 +1,6 @@
 package health
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 
@@ -19,7 +18,7 @@ func ReadyHandler(pool *pgxpool.Pool, cache *redis.Client) http.HandlerFunc {
 		} else {
 			checks["postgres"] = "up"
 		}
-		if err := cache.Ping(context.Background()).Err(); err != nil {
+		if err := cache.Ping(r.Context()).Err(); err != nil {
 			checks["redis"] = "down"
 			status = http.StatusServiceUnavailable
 		} else {
