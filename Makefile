@@ -1,6 +1,6 @@
 APP=vod2live
 
-.PHONY: run test coverage lint fmt compose-up compose-down e2e contract load-test playback-load-test ha-smoke migrate verify-migrations db-backup db-verify-backup db-restore
+.PHONY: run test coverage lint fmt compose-up compose-down staging-smoke e2e contract load-test playback-load-test ha-smoke migrate verify-migrations db-backup db-verify-backup db-restore
 
 run:
 	go run ./cmd/api
@@ -25,6 +25,9 @@ compose-up:
 
 compose-down:
 	docker compose down -v
+
+staging-smoke:
+	./scripts/staging-smoke.sh
 
 e2e:
 	tests/integration/e2e.sh

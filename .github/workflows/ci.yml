@@ -56,13 +56,9 @@ jobs:
           MINIO_ROOT_USER: test
           MINIO_ROOT_PASSWORD: test
           MINIO_USE_SSL: "false"
+          STAGING_SMOKE_KEEP_SERVICES: "1"
         run: |
-          docker compose --profile local -f docker-compose.yml -f deployments/staging/docker-compose.staging.yml \
-            up -d --wait --wait-timeout 120 postgres redis minio hls-fixture api playout media-worker
-          for service in api playout media-worker; do
-            docker compose --profile local -f docker-compose.yml -f deployments/staging/docker-compose.staging.yml \
-              exec -T "$service" sh -ec 'test "$(readlink /proc/1/exe)" = "$1"' _ "/usr/local/bin/service-$service"
-          done
+          ./scripts/staging-smoke.sh
       - run: VOD2LIVE_TEST_DATABASE_URL='postgres://vod2live:vod2live@localhost:5432/vod2live?sslmode=disable' VOD2LIVE_TEST_MINIO_ENDPOINT='localhost:9000' go test ./internal/media -run '^TestWorkerFailurePersistsDeadJobAndObjectState$' -count=1
       - run: ./tests/integration/e2e.sh
       - run: ./tests/integration/contract.sh

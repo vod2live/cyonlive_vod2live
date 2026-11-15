@@ -532,6 +532,13 @@ O CI executa:
 
 Os mesmos gates locais podem ser executados com `make coverage` e `make lint`.
 
+A validação de staging pode ser executada com `make staging-smoke`. O script sobe as
+dependências e os três serviços, aguarda os healthchecks e confirma que cada serviço
+iniciou o binário correspondente (`service-api`, `service-playout` ou
+`service-media-worker`). Por padrão, ele remove os containers ao terminar; defina
+`STAGING_SMOKE_KEEP_SERVICES=1` quando os serviços precisarem permanecer ativos para
+testes E2E subsequentes. Essa etapa requer um daemon Docker disponível.
+
 A validação integrada precisa ser executada em um runner com Docker habilitado.
 
 ## Estrutura do projeto
