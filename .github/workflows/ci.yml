@@ -49,7 +49,7 @@ jobs:
           DATABASE_URL: postgres://vod2live:vod2live@postgres:5432/vod2live?sslmode=disable
           REDIS_ADDR: redis:6379
           API_KEY: ci-test-api-key
-          AUTH_TOKEN_SECRET: ci-test-auth-token-secret
+          AUTH_TOKEN_SECRET: ci-test-auth-token-secret-32-bytes-minimum
           PLAYBACK_TOKEN_SECRET: ci-test-playback-token-secret-32-bytes-minimum
           METRICS_API_KEY: ci-test-metrics-key
           CORS_ALLOWED_ORIGIN: https://example.test
