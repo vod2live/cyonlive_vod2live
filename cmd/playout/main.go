@@ -61,7 +61,7 @@ func main() {
 		if err != nil {
 			log.Printf("playout tick failed: %v", err)
 		}
-	}}
+	}, OnSkipped: playoutMetrics.ObservePlayoutSkipped}
 	log.Printf("vod2live playout worker started; metrics=%s", metricsAddr)
 	if err := worker.Run(ctx, channels.ListRunning); err != nil && !errors.Is(err, context.Canceled) {
 		log.Fatal(err)

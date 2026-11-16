@@ -1,6 +1,7 @@
 package metrics
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -49,6 +50,26 @@ func TestMediaMetrics(t *testing.T) {
 	}
 	if strings.Contains(body, `status="ignored"`) {
 		t.Fatalf("unexpected unsupported status in metrics: %s", body)
+	}
+}
+
+func TestPlayoutMetricsDistinguishSkippedLease(t *testing.T) {
+	m := &Metrics{}
+	m.ObservePlayoutTick(nil)
+	m.ObservePlayoutTick(errors.New("worker failed"))
+	m.ObservePlayoutSkipped()
+
+	rr := httptest.NewRecorder()
+	m.Handler(rr, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	body := rr.Body.String()
+	for _, metric := range []string{
+		"vod2live_playout_ticks_total 2",
+		"vod2live_playout_errors_total 1",
+		"vod2live_playout_skipped_total 1",
+	} {
+		if !strings.Contains(body, metric) {
+			t.Fatalf("missing playout metric %q in %s", metric, body)
+		}
 	}
 }
 

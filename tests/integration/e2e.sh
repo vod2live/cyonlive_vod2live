@@ -7,6 +7,19 @@ ADMIN_EMAIL="${PHASE14_ADMIN_EMAIL:-admin@example.com}"
 ADMIN_PASSWORD="${PHASE14_ADMIN_PASSWORD:-phase14-test-password}"
 json_value() { python3 -c 'import json,sys; d=json.load(sys.stdin); print(d[sys.argv[1]])' "$1"; }
 wait_ready() { i=0; while [ "$i" -lt 30 ]; do if curl --fail --silent "$BASE_URL/readyz" >/dev/null; then return 0; fi; i=$((i+1)); sleep 2; done; echo "API não ficou pronta" >&2; return 1; }
+wait_playout_running() {
+	i=0
+	last_status=""
+	while [ "$i" -lt 20 ]; do
+		last_status=$(curl --fail --silent "$BASE_URL/v1/channels/$channel_id/status" -H "$AUTH_HEADER")
+		playout_status=$(printf '%s' "$last_status" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("playout",{}).get("Status",""))')
+		if [ "$playout_status" = "running" ]; then return 0; fi
+		i=$((i+1))
+		sleep 1
+	done
+	printf 'playout não chegou a running; último status: %s\n' "$last_status" >&2
+	return 1
+}
 wait_ready
 bootstrap=$(curl --fail --silent -X POST "$BASE_URL/v1/auth/bootstrap" -H "X-API-Key: $API_KEY" -H 'Content-Type: application/json' -d "{\"email\":\"$ADMIN_EMAIL\",\"password\":\"$ADMIN_PASSWORD\",\"organization_name\":\"Organização E2E\"}")
 ADMIN_TOKEN=$(printf '%s' "$bootstrap" | json_value access_token)
@@ -36,10 +49,11 @@ if [ "$(curl --silent --output /dev/null --write-out '%{http_code}' "$BASE_URL/v
 tenant_a_channel=$(curl --fail --silent -X POST "$BASE_URL/v1/channels" -H "Authorization: Bearer $TENANT_EDITOR_TOKEN" -H 'Content-Type: application/json' -d "{\"name\":\"Canal Tenant A\",\"tenant_id\":\"$tenant_a_id\"}")
 printf '%s' "$tenant_a_channel" | grep -q "\"tenant_id\":\"$tenant_a_id\""
 start=$(date -u -d '-1 second' '+%Y-%m-%dT%H:%M:%SZ')
-item=$(curl --fail --silent -X POST "$BASE_URL/v1/channels/$channel_id/schedule" -H "$AUTH_HEADER" -H 'Content-Type: application/json' -d "{\"asset_id\":\"$asset_id\",\"starts_at\":\"$start\",\"position\":1}")
+end=$(date -u -d '+30 seconds' '+%Y-%m-%dT%H:%M:%SZ')
+item=$(curl --fail --silent -X POST "$BASE_URL/v1/channels/$channel_id/schedule" -H "$AUTH_HEADER" -H 'Content-Type: application/json' -d "{\"asset_id\":\"$asset_id\",\"starts_at\":\"$start\",\"ends_at\":\"$end\",\"position\":1}")
 item_id=$(printf '%s' "$item" | json_value id)
 curl --fail --silent -X POST "$BASE_URL/v1/channels/$channel_id/start" -H "$AUTH_HEADER" >/dev/null
-curl --fail --silent "$BASE_URL/v1/channels/$channel_id/status" -H "$AUTH_HEADER" | grep -q '"status":"running"'
+wait_playout_running
 master=$(curl --fail --silent "$BASE_URL/v1/channels/$channel_id/master.m3u8" -H "$AUTH_HEADER")
 printf '%s' "$master" | grep -q '#EXTM3U'
 media=$(curl --fail --silent "$BASE_URL/v1/channels/$channel_id/media/360p.m3u8" -H "$AUTH_HEADER")

@@ -22,6 +22,7 @@ type Metrics struct {
 	ManifestRequests atomic.Uint64
 	PlayoutTicks     atomic.Uint64
 	PlayoutErrors    atomic.Uint64
+	PlayoutSkipped   atomic.Uint64
 	mu               sync.Mutex
 	byStatus         map[int]uint64
 	latencyCount     uint64
@@ -74,6 +75,10 @@ func (m *Metrics) ObservePlayoutTick(err error) {
 	if err != nil {
 		m.PlayoutErrors.Add(1)
 	}
+}
+
+func (m *Metrics) ObservePlayoutSkipped() {
+	m.PlayoutSkipped.Add(1)
 }
 
 func (m *Metrics) SetMediaWorkerState(state string) {
@@ -130,6 +135,7 @@ func (m *Metrics) Handler(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "vod2live_manifest_requests_total %d\n", m.ManifestRequests.Load())
 	fmt.Fprintf(w, "vod2live_playout_ticks_total %d\n", m.PlayoutTicks.Load())
 	fmt.Fprintf(w, "vod2live_playout_errors_total %d\n", m.PlayoutErrors.Load())
+	fmt.Fprintf(w, "vod2live_playout_skipped_total %d\n", m.PlayoutSkipped.Load())
 	fmt.Fprintln(w, "vod2live_ready 1")
 	fmt.Fprintln(w, "vod2live_last_status_code "+strconv.Itoa(http.StatusOK))
 	m.mu.Lock()
